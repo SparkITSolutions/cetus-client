@@ -15,7 +15,7 @@ def main(args):
     with open("api_key", "r") as f:
         apikey = f.read().strip()
     if not apikey:
-        logger.error("No API key provided, please put your api key into the api_key file in the same folder as this script")
+        logger.error("No API key provided, please put your api key into a file called \"api_key\" in the same folder as this script")
         exit(1)
     parser = argparse.ArgumentParser()
     parser.add_argument("search")
@@ -23,10 +23,11 @@ def main(args):
     parser.add_argument("--index", choices=["alerting","dns","certstream"])
     parser.add_argument("--media", default="nvme")
     parser.add_argument("--stdout", action="store_true")
+    parser.add_argument("--since-days", help="How many days back to look.  Only has an effect on first pull", default=7, type=int)
     args = parser.parse_args()
     index = args.index
     curtime = datetime.datetime.now()
-    since_suffix = ""
+    since_suffix = f" AND {index}_timestamp:[{(datetime.datetime.today() - datetime.timedelta(days=args.since_days)).replace(microsecond=0).isoformat()} TO *]"
     marker_id = None
     end = False
     pit_id = None
@@ -42,6 +43,7 @@ def main(args):
                 marker_id = marker_search_data["last_uuid"]
                 since_suffix = f" AND {index}_timestamp:[{marker_string} TO *]"
                 logger.debug(f"Pulling data since {marker_string} and id {marker_id}")
+
     while not end:
         obj = slurp(apikey, args, since_suffix, pit_id)
 
