@@ -101,11 +101,17 @@ def query(apikey, index, search, media="nvme",since_days=7, since_suffix=None, m
 
 
 def slurp(apikey, search, index, media, since_suffix, hostname, pit_id=None):
-    url = f"https://{hostname}/api/query?q={search}{since_suffix}&index={index}&media={media}"
-    req_body = None
+    #url = f"https://{hostname}/api/query?query={search}{since_suffix}&index={index}&media={media}"
+    url = f"https://{hostname}/api/query/"
+    req_body = {
+        "query": f"{search}{since_suffix}",
+        "index": index,
+        "media": media
+    }
+    # req_body = None
     if pit_id:
-        req_body = {"pit_id": pit_id}
-    r = requests.get(url, headers={"Authorization": f"Token {apikey}", "Accept": "application/json"}, data=req_body)
+        req_body["pit_id"]= pit_id
+    r = requests.post(url, headers={"Authorization": f"Token {apikey}", "Accept": "application/json"}, data=req_body)
     obj = r.json()
     return obj
 
