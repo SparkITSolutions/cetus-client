@@ -7,13 +7,14 @@ import json
 import hashlib
 import logging
 
+loglevel = os.getenv("CETUS_LOGLEVEL", logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(loglevel)
 
 def main(args):
     timestring_format = "%Y-%m-%dT%H:%M:%S.%f"
-    loglevel = os.getenv("CETUS_LOGLEVEL", logging.INFO)
-    logger = logging.getLogger(__name__)
-    logger.setLevel(loglevel)
-    apikey = get_apikey(logger)
+
+    apikey = get_apikey()
     parser = argparse.ArgumentParser()
     parser.add_argument("search")
     # parser.add_argument("--host")
@@ -56,7 +57,7 @@ def main(args):
             marker.write(json.dumps({args.search: {"last_timestamp": latest_timestamp, "last_uuid": last_id}}))
 
 
-def get_apikey(logger):
+def get_apikey():
     with open("api_key", "r") as f:
         apikey = f.read().strip()
     if not apikey:
