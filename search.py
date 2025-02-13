@@ -7,33 +7,32 @@ import json
 import hashlib
 import logging
 
+
 def main(args):
     timestring_format = "%Y-%m-%dT%H:%M:%S.%f"
-    loglevel = os.getenv("CETUS_LOGLEVEL",logging.INFO)
+    loglevel = os.getenv("CETUS_LOGLEVEL", logging.INFO)
     logger = logging.getLogger(__name__)
     logger.setLevel(loglevel)
-    with open("api_key", "r") as f:
-        apikey = f.read().strip()
-    if not apikey:
-        logger.error("No API key provided, please put your api key into a file called \"api_key\" in the same folder as this script")
-        exit(1)
+    apikey = get_apikey(logger)
     parser = argparse.ArgumentParser()
     parser.add_argument("search")
-    parser.add_argument("--host")
-    parser.add_argument("--index", choices=["alerting","dns","certstream"])
+    # parser.add_argument("--host")
+    parser.add_argument("--index", choices=["alerting", "dns", "certstream"])
     parser.add_argument("--media", default="nvme")
     parser.add_argument("--stdout", action="store_true")
-    parser.add_argument("--since-days", help="How many days back to look.  Only has an effect on first pull", default=7, type=int)
+    parser.add_argument("--since-days", help="How many days back to look.  Only has an effect on first pull", default=7,
+                        type=int)
     args = parser.parse_args()
+    # hostname = args.host
     index = args.index
     curtime = datetime.datetime.now()
-    since_suffix = f" AND {index}_timestamp:[{(datetime.datetime.today() - datetime.timedelta(days=args.since_days)).replace(microsecond=0).isoformat()} TO *]"
+
     marker_id = None
-    end = False
-    pit_id = None
-    last_id = None
-    latest_timestamp = None
-    out_data = []
+    since_days = args.since_days
+    since_suffix = None
+    search = args.search
+    media = args.media
+
     if os.path.exists(f"{index}_marker"):
         with open(f"{index}_marker", "r") as marker:
             marker_data = json.loads(marker.read())
@@ -44,8 +43,40 @@ def main(args):
                 since_suffix = f" AND {index}_timestamp:[{marker_string} TO *]"
                 logger.debug(f"Pulling data since {marker_string} and id {marker_id}")
 
+    out_data, last_id, latest_timestamp = query(apikey, index, search, media, since_days, since_suffix, marker_id)
+    if args.stdout:
+        print(json.dumps(out_data, indent=4))
+    else:
+        outfilename = f"{index}_results_{curtime.timestamp()}.out"
+        with open(outfilename, "w") as output:
+            logger.info(f"writing results to {outfilename}.  To write to stdout instead, pass --stdout argument")
+            output.write(json.dumps(out_data))
+
+        with open(f"{index}_marker", "w") as marker:
+            marker.write(json.dumps({args.search: {"last_timestamp": latest_timestamp, "last_uuid": last_id}}))
+
+
+def get_apikey(logger):
+    with open("api_key", "r") as f:
+        apikey = f.read().strip()
+    if not apikey:
+        logger.error(
+            "No API key provided, please put your api key into a file called \"api_key\" in the same folder as this script")
+        exit(1)
+    return apikey
+
+
+def query(apikey, index, search, media="nvme",since_days=7, since_suffix=None, marker_id=None):
+    pit_id = None
+    end = False
+    last_id = None
+    hostname = "alerting.sparkits.ca"
+    latest_timestamp = None
+    out_data = []
+    if not since_suffix:
+        since_suffix = f" AND {index}_timestamp:[{(datetime.datetime.today() - datetime.timedelta(days=since_days)).replace(microsecond=0).isoformat()} TO *]"
     while not end:
-        obj = slurp(apikey, args, since_suffix, pit_id)
+        obj = slurp(apikey, search, index, media, since_suffix, hostname, pit_id)
 
         response_data = obj['data']
         ctr = 0
@@ -65,20 +96,11 @@ def main(args):
         if not end:
             since_suffix = f" AND {index}_timestamp:[{latest_timestamp} TO *]"
             pit_id = obj['pit_id']
-    if args.stdout:
-        print(json.dumps(out_data, indent=4))
-    else:
-        outfilename = f"{index}_results_{curtime.timestamp()}.out"
-        with open(outfilename, "w") as output:
-            logger.info(f"writing results to {outfilename}.  To write to stdout instead, pass --stdout argument")
-            output.write(json.dumps(out_data))
-
-        with open(f"{index}_marker", "w") as marker:
-            marker.write(json.dumps({args.search:{"last_timestamp": latest_timestamp, "last_uuid": last_id}}))
+    return out_data, last_id, latest_timestamp
 
 
-def slurp(apikey, args, since_suffix, pit_id=None):
-    url = f"https://{args.host}/api/query?q={args.search}{since_suffix}&index={args.index}&media={args.media}"
+def slurp(apikey, search, index, media, since_suffix, hostname, pit_id=None):
+    url = f"https://{hostname}/api/query?q={search}{since_suffix}&index={index}&media={media}"
     req_body = None
     if pit_id:
         req_body = {"pit_id": pit_id}
@@ -90,7 +112,3 @@ def slurp(apikey, args, since_suffix, pit_id=None):
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     main(sys.argv)
-
-
-
-
