@@ -19,7 +19,7 @@ def main(args):
     parser.add_argument("search")
     # parser.add_argument("--host")
     parser.add_argument("--index", choices=["alerting", "dns", "certstream"])
-    parser.add_argument("--media", default="nvme")
+    parser.add_argument("--media", default="nvme", choices=["nvme", "all"])
     parser.add_argument("--stdout", action="store_true")
     parser.add_argument("--since-days", help="How many days back to look.  Only has an effect on first pull", default=7,
                         type=int)
