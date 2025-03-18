@@ -67,36 +67,45 @@ def get_apikey():
     return apikey
 
 
-def query(apikey, index, search, media="nvme",since_days=7, since_suffix=None, marker_id=None):
+def     query(apikey, index, search, media="nvme",since_days=7, since_suffix=None, marker_id=None):
     pit_id = None
     end = False
     last_id = None
     hostname = "alerting.sparkits.ca"
     latest_timestamp = None
+    last_id=None
+
     out_data = []
+    index_timestamp_field = "timestamp"
+    if index != "certstream":
+        index_timestamp_field = f"{index}_timestamp"
     if not since_suffix:
-        since_suffix = f" AND {index}_timestamp:[{(datetime.datetime.today() - datetime.timedelta(days=since_days)).replace(microsecond=0).isoformat()} TO *]"
+        since_suffix = f" AND {index_timestamp_field}:[{(datetime.datetime.today() - datetime.timedelta(days=since_days)).replace(microsecond=0).isoformat()} TO *]"
     while not end:
         obj = slurp(apikey, search, index, media, since_suffix, hostname, pit_id)
-
         response_data = obj['data']
         ctr = 0
+
         if marker_id:
             for item in response_data:
                 ctr += 1
                 if item["uuid"] == marker_id:
+                    marker_id=None
                     break
+
         if ctr == len(response_data):
             # Only record(s) returned ends with our marker record
-            return
+            break
+
         out_data.extend(response_data[ctr:])
         end = len(response_data) < 10000
         last_id = out_data[-1]["uuid"]
+        latest_timestamp = out_data[-1][f'{index_timestamp_field}']
 
-        latest_timestamp = out_data[-1][f'{index}_timestamp']
         if not end:
-            since_suffix = f" AND {index}_timestamp:[{latest_timestamp} TO *]"
+            since_suffix = f" AND {index_timestamp_field}:[{latest_timestamp} TO *]"
             pit_id = obj['pit_id']
+
     return out_data, last_id, latest_timestamp
 
 
