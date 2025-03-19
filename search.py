@@ -76,9 +76,7 @@ def     query(apikey, index, search, media="nvme",since_days=7, since_suffix=Non
     last_id=None
 
     out_data = []
-    index_timestamp_field = "timestamp"
-    if index != "certstream":
-        index_timestamp_field = f"{index}_timestamp"
+    index_timestamp_field = f"{index}_timestamp"
     if not since_suffix:
         since_suffix = f" AND {index_timestamp_field}:[{(datetime.datetime.today() - datetime.timedelta(days=since_days)).replace(microsecond=0).isoformat()} TO *]"
     while not end:
