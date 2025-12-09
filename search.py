@@ -97,8 +97,10 @@ def     query(apikey, index, search, media="nvme",since_days=7, since_suffix=Non
 
         out_data.extend(response_data[ctr:])
         end = len(response_data) < 10000
-        last_id = out_data[-1]["uuid"]
-        latest_timestamp = out_data[-1][f'{index_timestamp_field}']
+
+        if out_data:
+            last_id = out_data[-1]["uuid"]
+            latest_timestamp = out_data[-1][f'{index_timestamp_field}']
 
         if not end:
             since_suffix = f" AND {index_timestamp_field}:[{latest_timestamp} TO *]"
@@ -111,14 +113,17 @@ def slurp(apikey, search, index, media, since_suffix, hostname, pit_id=None):
     #url = f"https://{hostname}/api/query?query={search}{since_suffix}&index={index}&media={media}"
     url = f"https://{hostname}/api/query/"
     req_body = {
-        "query": f"{search}{since_suffix}",
+        "query": f"({search}){since_suffix}",
         "index": index,
         "media": media
     }
     # req_body = None
     if pit_id:
         req_body["pit_id"]= pit_id
-    r = requests.post(url, headers={"Authorization": f"Token {apikey}", "Accept": "application/json"}, data=req_body)
+    logger.debug(f"Request body: {json.dumps(req_body, indent=2)}")
+    r = requests.post(url, headers={"Authorization": f"Token {apikey}", "Accept": "application/json"}, json=req_body)
+    logger.debug(f"Response status: {r.status_code}")
+    logger.debug(f"Response body: {r.text[:1000]}")  # First 1000 chars
     obj = r.json()
     return obj
 
