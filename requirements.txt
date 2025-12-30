@@ -1,1 +1,3 @@
-requests
+# Install this package with: pip install -e .
+# Dependencies are defined in pyproject.toml
+-e .
