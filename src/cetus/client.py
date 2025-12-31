@@ -87,8 +87,13 @@ class CetusClient:
     def client(self) -> httpx.Client:
         """Lazy-initialize the HTTP client."""
         if self._client is None:
+            # Support explicit protocol in host (e.g., http://localhost:8000)
+            if self.host.startswith("http://") or self.host.startswith("https://"):
+                base_url = self.host
+            else:
+                base_url = f"https://{self.host}"
             self._client = httpx.Client(
-                base_url=f"https://{self.host}",
+                base_url=base_url,
                 headers={
                     "Authorization": f"Token {self.api_key}",
                     "Accept": "application/json",
