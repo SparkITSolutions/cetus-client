@@ -362,6 +362,10 @@ class CetusClient:
         url = f"{base_url}/api/query/stream/"
 
         try:
+            # Use a timeout that allows periodic interrupt checks on Windows
+            # connect/pool timeouts use self.timeout, but read uses 30s chunks
+            timeout = httpx.Timeout(self.timeout, read=30.0)
+
             with httpx.stream(
                 "POST",
                 url,
@@ -370,7 +374,7 @@ class CetusClient:
                     "Authorization": f"Api-Key {self.api_key}",
                     "Accept": "application/x-ndjson",
                 },
-                timeout=self.timeout,
+                timeout=timeout,
             ) as response:
                 if response.status_code == 401:
                     raise AuthenticationError(

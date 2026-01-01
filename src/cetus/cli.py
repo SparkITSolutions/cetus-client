@@ -157,6 +157,8 @@ def execute_streaming_query(
             "Use --format csv or jsonl for true streaming.[/yellow]"
         )
 
+    interrupted = False
+
     with CetusClient.from_config(config) as client:
         # Show streaming indicator
         console.print("[dim]Streaming results...[/dim]", highlight=False)
@@ -216,6 +218,9 @@ def execute_streaming_query(
                 formatter = get_formatter("table")
                 formatter.format_stream(table_buffer, out_file)
 
+        except KeyboardInterrupt:
+            interrupted = True
+            console.print("\n[yellow]Interrupted[/yellow]")
         finally:
             if output_file:
                 out_file.close()
@@ -225,8 +230,11 @@ def execute_streaming_query(
     # Report results
     if output_file:
         console.print(f"[green]Streamed {count} records to {output_file}[/green]")
-    else:
+    elif not interrupted:
         console.print(f"\n[dim]Streamed {count} records[/dim]", highlight=False)
+
+    if interrupted:
+        sys.exit(130)
 
     # Save marker for next incremental query (only in file mode, not stdout)
     if output_file and not no_marker and last_uuid and last_timestamp:
