@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -78,6 +79,7 @@ def execute_query_and_output(
             client.close()
 
     # Run with progress indicator
+    start_time = time.perf_counter()
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -91,12 +93,13 @@ def execute_query_and_output(
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted[/yellow]")
             raise
+    elapsed = time.perf_counter() - start_time
 
     # Output results
     if output_file:
         with open(output_file, "w", encoding="utf-8") as f:
             formatter.format_stream(result.data, f)
-        console.print(f"[green]Wrote {result.total_fetched} records to {output_file}[/green]")
+        console.print(f"[green]Wrote {result.total_fetched} records to {output_file} in {elapsed:.2f}s[/green]")
     else:
         # Write to stdout - use stream for proper encoding handling
         # For table format, use Rich console directly to handle Unicode
@@ -108,6 +111,7 @@ def execute_query_and_output(
             stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
             formatter.format_stream(result.data, stdout)
             stdout.flush()
+        console.print(f"\n[dim]{result.total_fetched} records in {elapsed:.2f}s[/dim]", highlight=False)
 
     # Save marker for next incremental query (only in file mode, not stdout)
     if output_file and not no_marker and result.last_uuid and result.last_timestamp:
@@ -254,17 +258,19 @@ def execute_streaming_query(
         return count, last_uuid, last_timestamp, interrupted
 
     # Run the async streaming function
+    start_time = time.perf_counter()
     try:
         count, last_uuid, last_timestamp, interrupted = asyncio.run(stream_results())
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted[/yellow]")
         sys.exit(130)
+    elapsed = time.perf_counter() - start_time
 
     # Report results
     if output_file:
-        console.print(f"[green]Streamed {count} records to {output_file}[/green]")
+        console.print(f"[green]Streamed {count} records to {output_file} in {elapsed:.2f}s[/green]")
     elif not interrupted:
-        console.print(f"\n[dim]Streamed {count} records[/dim]", highlight=False)
+        console.print(f"\n[dim]Streamed {count} records in {elapsed:.2f}s[/dim]", highlight=False)
 
     if interrupted:
         sys.exit(130)
@@ -471,7 +477,7 @@ def config_set(key: str, value: str) -> None:
     Keys:
         api-key     Your Cetus API key
         host        API hostname (default: alerting.sparkits.ca)
-        timeout     Request timeout in seconds (default: 600)
+        timeout     Request timeout in seconds (default: 60)
         since-days  Default lookback period in days (default: 7)
     """
     try:

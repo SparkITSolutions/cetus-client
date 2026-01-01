@@ -67,7 +67,7 @@ class CetusClient:
         self,
         api_key: str,
         host: str = "alerting.sparkits.ca",
-        timeout: int = 600,
+        timeout: int = 60,
     ):
         self.api_key = api_key
         self.host = host
@@ -139,6 +139,7 @@ class CetusClient:
         index: Index,
         media: Media,
         pit_id: str | None = None,
+        search_after: list | None = None,
     ) -> dict:
         """Fetch a single page of results from the API."""
         body = {
@@ -148,6 +149,8 @@ class CetusClient:
         }
         if pit_id:
             body["pit_id"] = pit_id
+        if search_after:
+            body["search_after"] = search_after
 
         logger.debug("Request body: %s", body)
 
@@ -200,14 +203,16 @@ class CetusClient:
         last_uuid: str | None = None
         last_timestamp: str | None = None
         pit_id: str | None = None
+        search_after: list | None = None
         marker_uuid = marker.last_uuid if marker else None
         timestamp_field = f"{index}_timestamp"
 
+        # Build initial query with time filter (only needed for first request)
         time_filter = self._build_time_filter(index, since_days, marker)
         full_query = f"({search}){time_filter}"
 
         while True:
-            response = self._fetch_page(full_query, index, media, pit_id)
+            response = self._fetch_page(full_query, index, media, pit_id, search_after)
             pages_fetched += 1
 
             data = response.get("data", [])
@@ -242,14 +247,12 @@ class CetusClient:
                 last_timestamp = all_data[-1].get(timestamp_field)
 
             # Check if there are more pages
-            if len(response.get("data", [])) < self.PAGE_SIZE:
+            if not response.get("has_more", False):
                 break
 
-            # Update query for next page and get PIT ID
+            # Get pagination cursor for next page
             pit_id = response.get("pit_id")
-            if last_timestamp:
-                time_filter = f" AND {timestamp_field}:[{last_timestamp} TO *]"
-                full_query = f"({search}){time_filter}"
+            search_after = response.get("search_after")
 
         return QueryResult(
             data=all_data,
@@ -266,6 +269,7 @@ class CetusClient:
         index: Index,
         media: Media,
         pit_id: str | None = None,
+        search_after: list | None = None,
     ) -> dict:
         """Fetch a single page of results from the API (async version)."""
         body = {
@@ -275,6 +279,8 @@ class CetusClient:
         }
         if pit_id:
             body["pit_id"] = pit_id
+        if search_after:
+            body["search_after"] = search_after
 
         logger.debug("Async request body: %s", body)
 
@@ -343,16 +349,18 @@ class CetusClient:
         last_uuid: str | None = None
         last_timestamp: str | None = None
         pit_id: str | None = None
+        search_after: list | None = None
         marker_uuid = marker.last_uuid if marker else None
         timestamp_field = f"{index}_timestamp"
 
+        # Build initial query with time filter (only needed for first request)
         time_filter = self._build_time_filter(index, since_days, marker)
         full_query = f"({search}){time_filter}"
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             while True:
                 response = await self._fetch_page_async(
-                    client, full_query, index, media, pit_id
+                    client, full_query, index, media, pit_id, search_after
                 )
                 pages_fetched += 1
 
@@ -388,14 +396,12 @@ class CetusClient:
                     last_timestamp = all_data[-1].get(timestamp_field)
 
                 # Check if there are more pages
-                if len(response.get("data", [])) < self.PAGE_SIZE:
+                if not response.get("has_more", False):
                     break
 
-                # Update query for next page and get PIT ID
+                # Get pagination cursor for next page
                 pit_id = response.get("pit_id")
-                if last_timestamp:
-                    time_filter = f" AND {timestamp_field}:[{last_timestamp} TO *]"
-                    full_query = f"({search}){time_filter}"
+                search_after = response.get("search_after")
 
         return QueryResult(
             data=all_data,
@@ -419,15 +425,14 @@ class CetusClient:
         Same arguments as query().
         """
         pit_id: str | None = None
+        search_after: list | None = None
         marker_uuid = marker.last_uuid if marker else None
-        timestamp_field = f"{index}_timestamp"
-        last_timestamp: str | None = None
 
         time_filter = self._build_time_filter(index, since_days, marker)
         full_query = f"({search}){time_filter}"
 
         while True:
-            response = self._fetch_page(full_query, index, media, pit_id)
+            response = self._fetch_page(full_query, index, media, pit_id, search_after)
             data = response.get("data", [])
             if not data:
                 break
@@ -447,16 +452,14 @@ class CetusClient:
             # Yield records
             for item in data[start_idx:]:
                 yield item
-                last_timestamp = item.get(timestamp_field)
 
-            # Check for more pages
-            if len(data) < self.PAGE_SIZE:
+            # Check if there are more pages
+            if not response.get("has_more", False):
                 break
 
+            # Get pagination cursor for next page
             pit_id = response.get("pit_id")
-            if last_timestamp:
-                time_filter = f" AND {timestamp_field}:[{last_timestamp} TO *]"
-                full_query = f"({search}){time_filter}"
+            search_after = response.get("search_after")
 
     def query_stream(
         self,
