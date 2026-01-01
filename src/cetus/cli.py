@@ -101,6 +101,140 @@ def execute_query_and_output(
             console.print("[dim]Saved marker for next incremental query[/dim]")
 
 
+def execute_streaming_query(
+    ctx: click.Context,
+    search: str,
+    index: str,
+    media: str,
+    output_format: str | None,
+    output_file: Path | None,
+    since_days: int | None,
+    no_marker: bool,
+    api_key: str | None,
+    host: str | None,
+) -> None:
+    """Execute a streaming query, outputting results as they arrive.
+
+    Uses the streaming API endpoint for lower latency on large result sets.
+    Results are written immediately as they're received from the server.
+
+    Args:
+        ctx: Click context
+        search: The search query string
+        index: Index to search (dns, certstream, alerting)
+        media: Storage tier (nvme or all)
+        output_format: Output format (json, jsonl, csv, table). If None, defaults to jsonl.
+        output_file: Optional file to write output to
+        since_days: Days to look back (None uses config default)
+        no_marker: If True, don't use or save markers
+        api_key: Optional API key override
+        host: Optional host override
+    """
+    import csv
+    import json
+
+    config = Config.load(api_key=api_key, host=host)
+    if since_days is None:
+        since_days = config.since_days
+
+    # --stream implies jsonl format unless explicitly specified
+    if output_format is None:
+        output_format = "jsonl"
+
+    marker_store = MarkerStore()
+    # Only use markers in file mode, not stdout mode
+    marker = None if (no_marker or not output_file) else marker_store.get(search, index)
+
+    timestamp_field = f"{index}_timestamp"
+    count = 0
+    last_uuid = None
+    last_timestamp = None
+
+    # Table format requires buffering for column width calculation
+    if output_format == "table":
+        console.print(
+            "[yellow]Warning: --stream with --format table requires buffering. "
+            "Use --format csv or jsonl for true streaming.[/yellow]"
+        )
+
+    with CetusClient.from_config(config) as client:
+        # Show streaming indicator
+        console.print("[dim]Streaming results...[/dim]", highlight=False)
+
+        # Set up output destination
+        if output_file:
+            out_file = open(output_file, "w", encoding="utf-8", newline="")
+        else:
+            out_file = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="")
+
+        csv_writer = None
+        table_buffer = []  # Only used for table format
+
+        try:
+            if output_format == "json":
+                # JSON array format - stream but need wrapper
+                out_file.write("[\n")
+                first = True
+
+            for record in client.query_stream(
+                search=search,
+                index=index,
+                media=media,
+                since_days=since_days,
+                marker=marker,
+            ):
+                count += 1
+                last_uuid = record.get("uuid")
+                last_timestamp = record.get(timestamp_field)
+
+                if output_format == "jsonl":
+                    out_file.write(json.dumps(record) + "\n")
+                    out_file.flush()
+                elif output_format == "json":
+                    if not first:
+                        out_file.write(",\n")
+                    out_file.write("  " + json.dumps(record))
+                    first = False
+                elif output_format == "csv":
+                    # Initialize CSV writer with headers from first record
+                    if csv_writer is None:
+                        fieldnames = list(record.keys())
+                        csv_writer = csv.DictWriter(out_file, fieldnames=fieldnames, extrasaction="ignore")
+                        csv_writer.writeheader()
+                        out_file.flush()
+                    csv_writer.writerow(record)
+                    out_file.flush()
+                elif output_format == "table":
+                    # Buffer for table format
+                    table_buffer.append(record)
+
+            if output_format == "json":
+                out_file.write("\n]\n")
+
+            # Handle table format - output buffered data
+            if output_format == "table" and table_buffer:
+                formatter = get_formatter("table")
+                formatter.format_stream(table_buffer, out_file)
+
+        finally:
+            if output_file:
+                out_file.close()
+            else:
+                out_file.flush()
+
+    # Report results
+    if output_file:
+        console.print(f"[green]Streamed {count} records to {output_file}[/green]")
+    else:
+        console.print(f"\n[dim]Streamed {count} records[/dim]", highlight=False)
+
+    # Save marker for next incremental query (only in file mode, not stdout)
+    if output_file and not no_marker and last_uuid and last_timestamp:
+        marker_store.save(search, index, last_timestamp, last_uuid)
+        if ctx.obj.get("verbose"):
+            console.print("[dim]Saved marker for next incremental query[/dim]")
+
+
 def setup_logging(verbose: bool) -> None:
     """Configure logging based on verbosity."""
     level = logging.DEBUG if verbose else logging.WARNING
@@ -160,8 +294,8 @@ def main(ctx: click.Context, verbose: bool, version: bool) -> None:
     "-f",
     "output_format",
     type=click.Choice(["json", "jsonl", "csv", "table"]),
-    default="json",
-    help="Output format (default: json)",
+    default=None,
+    help="Output format (default: json, or jsonl with --stream)",
 )
 @click.option(
     "--output",
@@ -183,6 +317,11 @@ def main(ctx: click.Context, verbose: bool, version: bool) -> None:
     help="Ignore existing marker and don't save a new one",
 )
 @click.option(
+    "--stream",
+    is_flag=True,
+    help="Use streaming mode for faster first results on large queries",
+)
+@click.option(
     "--api-key",
     envvar="CETUS_API_KEY",
     help="API key (or set CETUS_API_KEY env var)",
@@ -198,10 +337,11 @@ def query(
     search: str,
     index: str,
     media: str,
-    output_format: str,
+    output_format: str | None,
     output_file: Path | None,
     since_days: int | None,
     no_marker: bool,
+    stream: bool,
     api_key: str | None,
     host: str | None,
 ) -> None:
@@ -220,20 +360,39 @@ def query(
     Incremental queries are supported via markers. On first run, data
     from the last 7 days is fetched. Subsequent runs fetch only new
     data since the last query. Use --no-marker to disable this behavior.
+
+    Use --stream for large queries to see results as they arrive rather
+    than waiting for all data to be fetched. Streaming defaults to jsonl format.
     """
     try:
-        execute_query_and_output(
-            ctx=ctx,
-            search=search,
-            index=index,
-            media=media,
-            output_format=output_format,
-            output_file=output_file,
-            since_days=since_days,
-            no_marker=no_marker,
-            api_key=api_key,
-            host=host,
-        )
+        if stream:
+            # --stream implies jsonl unless format explicitly specified
+            execute_streaming_query(
+                ctx=ctx,
+                search=search,
+                index=index,
+                media=media,
+                output_format=output_format,  # None defaults to jsonl in execute_streaming_query
+                output_file=output_file,
+                since_days=since_days,
+                no_marker=no_marker,
+                api_key=api_key,
+                host=host,
+            )
+        else:
+            # Default to json for non-streaming
+            execute_query_and_output(
+                ctx=ctx,
+                search=search,
+                index=index,
+                media=media,
+                output_format=output_format or "json",
+                output_file=output_file,
+                since_days=since_days,
+                no_marker=no_marker,
+                api_key=api_key,
+                host=host,
+            )
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -271,7 +430,7 @@ def config_set(key: str, value: str) -> None:
     Keys:
         api-key     Your Cetus API key
         host        API hostname (default: alerting.sparkits.ca)
-        timeout     Request timeout in seconds (default: 30)
+        timeout     Request timeout in seconds (default: 600)
         since-days  Default lookback period in days (default: 7)
     """
     try:
@@ -533,8 +692,8 @@ def alerts_results(
     "-f",
     "output_format",
     type=click.Choice(["json", "jsonl", "csv", "table"]),
-    default="json",
-    help="Output format (default: json)",
+    default=None,
+    help="Output format (default: json, or jsonl with --stream)",
 )
 @click.option(
     "--output",
@@ -555,6 +714,11 @@ def alerts_results(
     is_flag=True,
     help="Ignore existing marker and don't save a new one",
 )
+@click.option(
+    "--stream",
+    is_flag=True,
+    help="Use streaming mode for faster first results on large queries",
+)
 @click.option("--api-key", envvar="CETUS_API_KEY", help="API key")
 @click.option("--host", envvar="CETUS_HOST", help="API host")
 @click.pass_context
@@ -563,10 +727,11 @@ def alerts_backtest(
     alert_id: int,
     index: str,
     media: str,
-    output_format: str,
+    output_format: str | None,
     output_file: Path | None,
     since_days: int | None,
     no_marker: bool,
+    stream: bool,
     api_key: str | None,
     host: str | None,
 ) -> None:
@@ -584,6 +749,7 @@ def alerts_backtest(
         cetus alerts backtest 123 --index dns
         cetus alerts backtest 123 --format table
         cetus alerts backtest 123 -o results.json --since-days 30
+        cetus alerts backtest 123 --stream
     """
     try:
         config = Config.load(api_key=api_key, host=host)
@@ -611,19 +777,35 @@ def alerts_backtest(
             console.print(f"[dim]Backtesting alert: {alert.title}[/dim]")
             console.print(f"[dim]Query: {alert.query_preview}[/dim]")
 
-        # Run the query using the common helper
-        execute_query_and_output(
-            ctx=ctx,
-            search=alert.query_preview,
-            index=index,
-            media=media,
-            output_format=output_format,
-            output_file=output_file,
-            since_days=since_days,
-            no_marker=no_marker,
-            api_key=api_key,
-            host=host,
-        )
+        # Run the query using the appropriate helper
+        if stream:
+            # --stream implies jsonl unless format explicitly specified
+            execute_streaming_query(
+                ctx=ctx,
+                search=alert.query_preview,
+                index=index,
+                media=media,
+                output_format=output_format,  # None defaults to jsonl in execute_streaming_query
+                output_file=output_file,
+                since_days=since_days,
+                no_marker=no_marker,
+                api_key=api_key,
+                host=host,
+            )
+        else:
+            # Default to json for non-streaming
+            execute_query_and_output(
+                ctx=ctx,
+                search=alert.query_preview,
+                index=index,
+                media=media,
+                output_format=output_format or "json",
+                output_file=output_file,
+                since_days=since_days,
+                no_marker=no_marker,
+                api_key=api_key,
+                host=host,
+            )
 
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")

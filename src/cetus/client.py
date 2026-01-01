@@ -67,7 +67,7 @@ class CetusClient:
         self,
         api_key: str,
         host: str = "alerting.sparkits.ca",
-        timeout: int = 30,
+        timeout: int = 600,
     ):
         self.api_key = api_key
         self.host = host
@@ -311,6 +311,104 @@ class CetusClient:
             if last_timestamp:
                 time_filter = f" AND {timestamp_field}:[{last_timestamp} TO *]"
                 full_query = f"({search}){time_filter}"
+
+    def query_stream(
+        self,
+        search: str,
+        index: Index = "dns",
+        media: Media = "nvme",
+        since_days: int | None = 7,
+        marker: Marker | None = None,
+    ) -> Iterator[dict]:
+        """Execute a streaming query, yielding results as they arrive from the server.
+
+        This uses the streaming API endpoint which returns NDJSON, allowing
+        results to be processed immediately as they're received rather than
+        waiting for all pages to be fetched.
+
+        Args:
+            search: The search query (Lucene syntax)
+            index: Which index to query (dns, certstream, alerting)
+            media: Storage tier preference (nvme for fast, all for complete)
+            since_days: How many days back to search (ignored if marker is set)
+            marker: Resume from this marker position
+
+        Yields:
+            dict: Individual records as they arrive from the server
+        """
+        import json
+
+        marker_uuid = marker.last_uuid if marker else None
+        timestamp_field = f"{index}_timestamp"
+        past_marker = marker_uuid is None
+
+        time_filter = self._build_time_filter(index, since_days, marker)
+        full_query = f"({search}){time_filter}"
+
+        body = {
+            "query": full_query,
+            "index": index,
+            "media": media,
+        }
+
+        logger.debug("Streaming request body: %s", body)
+
+        # Support explicit protocol in host
+        if self.host.startswith("http://") or self.host.startswith("https://"):
+            base_url = self.host
+        else:
+            base_url = f"https://{self.host}"
+
+        url = f"{base_url}/api/query/stream/"
+
+        try:
+            with httpx.stream(
+                "POST",
+                url,
+                json=body,
+                headers={
+                    "Authorization": f"Api-Key {self.api_key}",
+                    "Accept": "application/x-ndjson",
+                },
+                timeout=self.timeout,
+            ) as response:
+                if response.status_code == 401:
+                    raise AuthenticationError(
+                        "Invalid API key. The API key system was updated - you may need to "
+                        "generate a new key at Profile -> Manage API Key"
+                    )
+                elif response.status_code == 403:
+                    raise AuthenticationError("Access denied - check your permissions")
+                elif response.status_code >= 400:
+                    response.read()
+                    raise APIError(
+                        f"API error: {response.text[:500]}",
+                        status_code=response.status_code,
+                    )
+
+                # Read lines as they arrive
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to parse NDJSON line: %s", line[:100])
+                        continue
+
+                    # Skip records until we pass the marker
+                    if not past_marker:
+                        if record.get("uuid") == marker_uuid:
+                            past_marker = True
+                        continue
+
+                    yield record
+
+        except httpx.ConnectError as e:
+            raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e
+        except httpx.TimeoutException as e:
+            raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
 
     def list_alerts(
         self,
