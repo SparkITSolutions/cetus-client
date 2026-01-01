@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import sys
@@ -36,6 +37,8 @@ def execute_query_and_output(
 ) -> None:
     """Common query execution logic used by both 'query' and 'alerts backtest' commands.
 
+    Uses async for responsive Ctrl+C handling.
+
     Args:
         ctx: Click context
         search: The search query string
@@ -48,6 +51,8 @@ def execute_query_and_output(
         api_key: Optional API key override
         host: Optional host override
     """
+    from .client import QueryResult
+
     config = Config.load(api_key=api_key, host=host)
     if since_days is None:
         since_days = config.since_days
@@ -58,24 +63,34 @@ def execute_query_and_output(
 
     formatter = get_formatter(output_format)
 
-    with CetusClient.from_config(config) as client:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task("Querying...", total=None)
-
-            result = client.query(
+    async def run_query() -> QueryResult:
+        """Async inner function for responsive interrupt handling."""
+        client = CetusClient.from_config(config)
+        try:
+            return await client.query_async(
                 search=search,
                 index=index,
                 media=media,
                 since_days=since_days,
                 marker=marker,
             )
+        finally:
+            client.close()
 
-            progress.update(task, description=f"Fetched {result.total_fetched} records")
+    # Run with progress indicator
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Querying...", total=None)
+
+        try:
+            result = asyncio.run(run_query())
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Interrupted[/yellow]")
+            raise
 
     # Output results
     if output_file:
@@ -115,7 +130,7 @@ def execute_streaming_query(
 ) -> None:
     """Execute a streaming query, outputting results as they arrive.
 
-    Uses the streaming API endpoint for lower latency on large result sets.
+    Uses the async streaming API for responsive Ctrl+C handling.
     Results are written immediately as they're received from the server.
 
     Args:
@@ -146,9 +161,6 @@ def execute_streaming_query(
     marker = None if (no_marker or not output_file) else marker_store.get(search, index)
 
     timestamp_field = f"{index}_timestamp"
-    count = 0
-    last_uuid = None
-    last_timestamp = None
 
     # Table format requires buffering for column width calculation
     if output_format == "table":
@@ -157,11 +169,14 @@ def execute_streaming_query(
             "Use --format csv or jsonl for true streaming.[/yellow]"
         )
 
-    interrupted = False
+    async def stream_results() -> tuple[int, str | None, str | None, bool]:
+        """Async inner function for streaming with responsive interrupt handling."""
+        count = 0
+        last_uuid = None
+        last_timestamp = None
+        interrupted = False
 
-    with CetusClient.from_config(config) as client:
-        # Show streaming indicator
-        console.print("[dim]Streaming results...[/dim]", highlight=False)
+        client = CetusClient.from_config(config)
 
         # Set up output destination
         if output_file:
@@ -177,8 +192,13 @@ def execute_streaming_query(
                 # JSON array format - stream but need wrapper
                 out_file.write("[\n")
                 first = True
+            else:
+                first = False
 
-            for record in client.query_stream(
+            # Show streaming indicator
+            console.print("[dim]Streaming results...[/dim]", highlight=False)
+
+            async for record in client.query_stream_async(
                 search=search,
                 index=index,
                 media=media,
@@ -218,6 +238,9 @@ def execute_streaming_query(
                 formatter = get_formatter("table")
                 formatter.format_stream(table_buffer, out_file)
 
+        except asyncio.CancelledError:
+            interrupted = True
+            console.print("\n[yellow]Interrupted[/yellow]")
         except KeyboardInterrupt:
             interrupted = True
             console.print("\n[yellow]Interrupted[/yellow]")
@@ -226,6 +249,16 @@ def execute_streaming_query(
                 out_file.close()
             else:
                 out_file.flush()
+            client.close()
+
+        return count, last_uuid, last_timestamp, interrupted
+
+    # Run the async streaming function
+    try:
+        count, last_uuid, last_timestamp, interrupted = asyncio.run(stream_results())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted[/yellow]")
+        sys.exit(130)
 
     # Report results
     if output_file:

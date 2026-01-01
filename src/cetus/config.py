@@ -21,7 +21,7 @@ from .exceptions import ConfigurationError
 
 APP_NAME = "cetus"
 DEFAULT_HOST = "alerting.sparkits.ca"
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 600
 DEFAULT_SINCE_DAYS = 7
 
 

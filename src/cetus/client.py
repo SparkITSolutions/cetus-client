@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Iterator, Literal
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, Literal
 
 import httpx
 
@@ -259,6 +259,152 @@ class CetusClient:
             pages_fetched=pages_fetched,
         )
 
+    async def _fetch_page_async(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        index: Index,
+        media: Media,
+        pit_id: str | None = None,
+    ) -> dict:
+        """Fetch a single page of results from the API (async version)."""
+        body = {
+            "query": query,
+            "index": index,
+            "media": media,
+        }
+        if pit_id:
+            body["pit_id"] = pit_id
+
+        logger.debug("Async request body: %s", body)
+
+        # Support explicit protocol in host
+        if self.host.startswith("http://") or self.host.startswith("https://"):
+            base_url = self.host
+        else:
+            base_url = f"https://{self.host}"
+
+        try:
+            response = await client.post(
+                f"{base_url}/api/query/",
+                json=body,
+                headers={
+                    "Authorization": f"Api-Key {self.api_key}",
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.ConnectError as e:
+            raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e
+        except httpx.TimeoutException as e:
+            raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
+
+        logger.debug("Response status: %d", response.status_code)
+
+        if response.status_code == 401:
+            raise AuthenticationError(
+                "Invalid API key. The API key system was updated - you may need to "
+                "generate a new key at Profile -> Manage API Key"
+            )
+        elif response.status_code == 403:
+            raise AuthenticationError("Access denied - check your permissions")
+        elif response.status_code >= 400:
+            raise APIError(
+                f"API error: {response.text[:500]}",
+                status_code=response.status_code,
+            )
+
+        return response.json()
+
+    async def query_async(
+        self,
+        search: str,
+        index: Index = "dns",
+        media: Media = "nvme",
+        since_days: int | None = 7,
+        marker: Marker | None = None,
+    ) -> QueryResult:
+        """Execute a query and return all results (async version).
+
+        This async version provides better interrupt handling (Ctrl+C) compared
+        to the sync version, as signals are processed between await points.
+
+        Args:
+            search: The search query (Lucene syntax)
+            index: Which index to query (dns, certstream, alerting)
+            media: Storage tier preference (nvme for fast, all for complete)
+            since_days: How many days back to search (ignored if marker is set)
+            marker: Resume from this marker position
+
+        Returns:
+            QueryResult containing all fetched data
+        """
+        all_data: list[dict] = []
+        pages_fetched = 0
+        last_uuid: str | None = None
+        last_timestamp: str | None = None
+        pit_id: str | None = None
+        marker_uuid = marker.last_uuid if marker else None
+        timestamp_field = f"{index}_timestamp"
+
+        time_filter = self._build_time_filter(index, since_days, marker)
+        full_query = f"({search}){time_filter}"
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            while True:
+                response = await self._fetch_page_async(
+                    client, full_query, index, media, pit_id
+                )
+                pages_fetched += 1
+
+                data = response.get("data", [])
+                if not data:
+                    break
+
+                # If we have a marker, skip records until we pass it
+                if marker_uuid:
+                    skip_count = 0
+                    for item in data:
+                        skip_count += 1
+                        if item.get("uuid") == marker_uuid:
+                            marker_uuid = None  # Found it, stop skipping
+                            break
+
+                    if skip_count == len(data):
+                        # Marker record was the last one or not found in this page
+                        if marker_uuid is None:
+                            # Found at end of page, nothing new here
+                            break
+                        # Not found yet, continue to next page
+                        pass
+                    else:
+                        # Add records after the marker
+                        data = data[skip_count:]
+
+                all_data.extend(data)
+
+                # Track last record for marker update
+                if all_data:
+                    last_uuid = all_data[-1].get("uuid")
+                    last_timestamp = all_data[-1].get(timestamp_field)
+
+                # Check if there are more pages
+                if len(response.get("data", [])) < self.PAGE_SIZE:
+                    break
+
+                # Update query for next page and get PIT ID
+                pit_id = response.get("pit_id")
+                if last_timestamp:
+                    time_filter = f" AND {timestamp_field}:[{last_timestamp} TO *]"
+                    full_query = f"({search}){time_filter}"
+
+        return QueryResult(
+            data=all_data,
+            total_fetched=len(all_data),
+            last_uuid=last_uuid,
+            last_timestamp=last_timestamp,
+            pages_fetched=pages_fetched,
+        )
+
     def query_iter(
         self,
         search: str,
@@ -372,7 +518,8 @@ class CetusClient:
                 json=body,
                 headers={
                     "Authorization": f"Api-Key {self.api_key}",
-                    "Accept": "application/x-ndjson",
+                    # Primary: ndjson for streaming, fallback: json for DRF error responses
+                    "Accept": "application/x-ndjson, application/json;q=0.9",
                 },
                 timeout=timeout,
             ) as response:
@@ -408,6 +555,103 @@ class CetusClient:
                         continue
 
                     yield record
+
+        except httpx.ConnectError as e:
+            raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e
+        except httpx.TimeoutException as e:
+            raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
+
+    async def query_stream_async(
+        self,
+        search: str,
+        index: Index = "dns",
+        media: Media = "nvme",
+        since_days: int | None = 7,
+        marker: Marker | None = None,
+    ) -> AsyncIterator[dict]:
+        """Execute a streaming query asynchronously, yielding results as they arrive.
+
+        This async version provides better interrupt handling (Ctrl+C) compared
+        to the sync version, as signals are processed between await points.
+
+        Args:
+            search: The search query (Lucene syntax)
+            index: Which index to query (dns, certstream, alerting)
+            media: Storage tier preference (nvme for fast, all for complete)
+            since_days: How many days back to search (ignored if marker is set)
+            marker: Resume from this marker position
+
+        Yields:
+            dict: Individual records as they arrive from the server
+        """
+        import json
+
+        marker_uuid = marker.last_uuid if marker else None
+        past_marker = marker_uuid is None
+
+        time_filter = self._build_time_filter(index, since_days, marker)
+        full_query = f"({search}){time_filter}"
+
+        body = {
+            "query": full_query,
+            "index": index,
+            "media": media,
+        }
+
+        logger.debug("Async streaming request body: %s", body)
+
+        # Support explicit protocol in host
+        if self.host.startswith("http://") or self.host.startswith("https://"):
+            base_url = self.host
+        else:
+            base_url = f"https://{self.host}"
+
+        url = f"{base_url}/api/query/stream/"
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    url,
+                    json=body,
+                    headers={
+                        "Authorization": f"Api-Key {self.api_key}",
+                        # Primary: ndjson for streaming, fallback: json for DRF error responses
+                        "Accept": "application/x-ndjson, application/json;q=0.9",
+                    },
+                ) as response:
+                    if response.status_code == 401:
+                        raise AuthenticationError(
+                            "Invalid API key. The API key system was updated - you may need to "
+                            "generate a new key at Profile -> Manage API Key"
+                        )
+                    elif response.status_code == 403:
+                        raise AuthenticationError("Access denied - check your permissions")
+                    elif response.status_code >= 400:
+                        await response.aread()
+                        raise APIError(
+                            f"API error: {response.text[:500]}",
+                            status_code=response.status_code,
+                        )
+
+                    # Read lines as they arrive - async iteration allows signal processing
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+
+                        try:
+                            record = json.loads(line)
+                        except json.JSONDecodeError:
+                            logger.warning("Failed to parse NDJSON line: %s", line[:100])
+                            continue
+
+                        # Skip records until we pass the marker
+                        if not past_marker:
+                            if record.get("uuid") == marker_uuid:
+                                past_marker = True
+                            continue
+
+                        yield record
 
         except httpx.ConnectError as e:
             raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e

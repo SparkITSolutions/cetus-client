@@ -171,7 +171,7 @@ cetus config show
 # Set values
 cetus config set api-key YOUR_API_KEY
 cetus config set host custom.hostname.com
-cetus config set timeout 60
+cetus config set timeout 900
 cetus config set since-days 14
 
 # Show config file location
