@@ -95,7 +95,7 @@ class CetusClient:
             self._client = httpx.Client(
                 base_url=base_url,
                 headers={
-                    "Authorization": f"Token {self.api_key}",
+                    "Authorization": f"Api-Key {self.api_key}",
                     "Accept": "application/json",
                 },
                 timeout=self.timeout,
@@ -161,7 +161,10 @@ class CetusClient:
         logger.debug("Response status: %d", response.status_code)
 
         if response.status_code == 401:
-            raise AuthenticationError("Invalid API key")
+            raise AuthenticationError(
+                "Invalid API key. The API key system was updated - you may need to "
+                "generate a new key at Profile -> Manage API Key"
+            )
         elif response.status_code == 403:
             raise AuthenticationError("Access denied - check your permissions")
         elif response.status_code >= 400:
@@ -345,7 +348,10 @@ class CetusClient:
             raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
 
         if response.status_code == 401:
-            raise AuthenticationError("Invalid API key")
+            raise AuthenticationError(
+                "Invalid API key. The API key system was updated - you may need to "
+                "generate a new key at Profile -> Manage API Key"
+            )
         elif response.status_code == 403:
             raise AuthenticationError("Access denied - you may need AlertingEnabled group membership")
         elif response.status_code >= 400:
@@ -378,7 +384,10 @@ class CetusClient:
             raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
 
         if response.status_code == 401:
-            raise AuthenticationError("Invalid API key")
+            raise AuthenticationError(
+                "Invalid API key. The API key system was updated - you may need to "
+                "generate a new key at Profile -> Manage API Key"
+            )
         elif response.status_code == 403:
             raise AuthenticationError("Access denied - you don't have permission to view this alert")
         elif response.status_code == 404:
@@ -429,7 +438,10 @@ class CetusClient:
             raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
 
         if response.status_code == 401:
-            raise AuthenticationError("Invalid API key")
+            raise AuthenticationError(
+                "Invalid API key. The API key system was updated - you may need to "
+                "generate a new key at Profile -> Manage API Key"
+            )
         elif response.status_code == 403:
             raise AuthenticationError("Access denied - you don't have permission to view this alert")
         elif response.status_code == 400:

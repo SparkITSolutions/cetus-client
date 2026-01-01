@@ -25,6 +25,12 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_SINCE_DAYS = 7
 
 
+def _escape_toml_string(value: str) -> str:
+    """Escape special characters for TOML basic string format."""
+    # TOML requires escaping backslashes and double quotes in basic strings
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def get_config_dir() -> Path:
     """Get the platform-appropriate config directory."""
     return Path(platformdirs.user_config_dir(APP_NAME))
@@ -140,9 +146,9 @@ class Config:
 
         lines = []
         if self.api_key:
-            lines.append(f'api_key = "{self.api_key}"')
+            lines.append(f'api_key = "{_escape_toml_string(self.api_key)}"')
         if self.host != DEFAULT_HOST:
-            lines.append(f'host = "{self.host}"')
+            lines.append(f'host = "{_escape_toml_string(self.host)}"')
         if self.timeout != DEFAULT_TIMEOUT:
             lines.append(f"timeout = {self.timeout}")
         if self.since_days != DEFAULT_SINCE_DAYS:
