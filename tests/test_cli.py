@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
 
 from cetus.cli import main
-from cetus.client import Alert, CetusClient, QueryResult
-from cetus.config import Config
+from cetus.client import QueryResult
 
 
 @pytest.fixture
@@ -216,7 +215,10 @@ class TestQueryCommand:
         """Create a mock query result."""
         return QueryResult(
             data=[
-                {"uuid": "1", "host": "example.com", "A": "1.1.1.1", "dns_timestamp": "2025-01-01T00:00:00Z"}
+                {
+                    "uuid": "1", "host": "example.com", "A": "1.1.1.1",
+                    "dns_timestamp": "2025-01-01T00:00:00Z",
+                }
             ],
             total_fetched=1,
             last_uuid="1",

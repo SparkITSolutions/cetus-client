@@ -241,7 +241,6 @@ class TestCSVFormatter:
         # Priority fields should come first
         uuid_pos = header.find("uuid")
         host_pos = header.find("host")
-        a_pos = header.find("A")
         other_pos = header.find("other")
 
         assert uuid_pos < other_pos
@@ -360,7 +359,10 @@ class TestTableFormatter:
 
     def test_limits_columns(self, formatter: TableFormatter):
         """Table should limit number of columns."""
-        data = [{"f1": 1, "f2": 2, "f3": 3, "f4": 4, "f5": 5, "f6": 6, "f7": 7, "f8": 8, "f9": 9, "f10": 10}]
+        data = [{
+            "f1": 1, "f2": 2, "f3": 3, "f4": 4, "f5": 5,
+            "f6": 6, "f7": 7, "f8": 8, "f9": 9, "f10": 10,
+        }]
         result = formatter.format(data)
         # Should only show up to 8 columns
         # Count occurrences of column values is tricky, but format should work

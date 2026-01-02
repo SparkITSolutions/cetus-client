@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, AsyncIterator, Iterator, Literal
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 
@@ -488,7 +489,6 @@ class CetusClient:
         import json
 
         marker_uuid = marker.last_uuid if marker else None
-        timestamp_field = f"{index}_timestamp"
         past_marker = marker_uuid is None
 
         time_filter = self._build_time_filter(index, since_days, marker)
@@ -702,7 +702,9 @@ class CetusClient:
                 "generate a new key at Profile -> Manage API Key"
             )
         elif response.status_code == 403:
-            raise AuthenticationError("Access denied - you may need AlertingEnabled group membership")
+            raise AuthenticationError(
+                "Access denied - you may need AlertingEnabled group membership"
+            )
         elif response.status_code >= 400:
             raise APIError(
                 f"API error: {response.text[:500]}",
@@ -738,7 +740,9 @@ class CetusClient:
                 "generate a new key at Profile -> Manage API Key"
             )
         elif response.status_code == 403:
-            raise AuthenticationError("Access denied - you don't have permission to view this alert")
+            raise AuthenticationError(
+                "Access denied - you don't have permission to view this alert"
+            )
         elif response.status_code == 404:
             return None
         elif response.status_code >= 400:
@@ -792,7 +796,9 @@ class CetusClient:
                 "generate a new key at Profile -> Manage API Key"
             )
         elif response.status_code == 403:
-            raise AuthenticationError("Access denied - you don't have permission to view this alert")
+            raise AuthenticationError(
+                "Access denied - you don't have permission to view this alert"
+            )
         elif response.status_code == 400:
             raise APIError(
                 f"Bad request: {response.text[:500]}",

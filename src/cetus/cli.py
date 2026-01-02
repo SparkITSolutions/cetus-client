@@ -99,7 +99,10 @@ def execute_query_and_output(
     if output_file:
         with open(output_file, "w", encoding="utf-8") as f:
             formatter.format_stream(result.data, f)
-        console.print(f"[green]Wrote {result.total_fetched} records to {output_file} in {elapsed:.2f}s[/green]")
+        console.print(
+            f"[green]Wrote {result.total_fetched} records to {output_file} "
+            f"in {elapsed:.2f}s[/green]"
+        )
     else:
         # Write to stdout - use stream for proper encoding handling
         # For table format, use Rich console directly to handle Unicode
@@ -111,7 +114,9 @@ def execute_query_and_output(
             stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
             formatter.format_stream(result.data, stdout)
             stdout.flush()
-        console.print(f"\n[dim]{result.total_fetched} records in {elapsed:.2f}s[/dim]", highlight=False)
+        console.print(
+            f"\n[dim]{result.total_fetched} records in {elapsed:.2f}s[/dim]", highlight=False
+        )
 
     # Save marker for next incremental query (only in file mode, not stdout)
     if output_file and not no_marker and result.last_uuid and result.last_timestamp:
@@ -225,7 +230,9 @@ def execute_streaming_query(
                     # Initialize CSV writer with headers from first record
                     if csv_writer is None:
                         fieldnames = list(record.keys())
-                        csv_writer = csv.DictWriter(out_file, fieldnames=fieldnames, extrasaction="ignore")
+                        csv_writer = csv.DictWriter(
+                            out_file, fieldnames=fieldnames, extrasaction="ignore"
+                        )
                         csv_writer.writeheader()
                         out_file.flush()
                     csv_writer.writerow(record)
@@ -596,7 +603,9 @@ def alerts_list(
         config = Config.load(api_key=api_key, host=host)
 
         if not owned and not shared:
-            console.print("[yellow]Warning: Both --no-owned and --no-shared results in no alerts[/yellow]")
+            console.print(
+                "[yellow]Warning: Both --no-owned and --no-shared results in no alerts[/yellow]"
+            )
             return
 
         with CetusClient.from_config(config) as client:
@@ -620,7 +629,9 @@ def alerts_list(
         for alert in alerts_data:
             type_color = type_colors.get(alert.alert_type, "white")
             owner_col = "You" if alert.owned else f"[dim]{alert.shared_by}[/dim]"
-            desc = alert.description[:40] + "..." if len(alert.description) > 40 else alert.description
+            desc = alert.description
+            if len(desc) > 40:
+                desc = desc[:40] + "..."
             table.add_row(
                 str(alert.id),
                 f"[{type_color}]{alert.alert_type}[/{type_color}]",

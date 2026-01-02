@@ -7,7 +7,8 @@ import io
 import json
 import sys
 from abc import ABC, abstractmethod
-from typing import IO, Iterable
+from collections.abc import Iterable
+from typing import IO
 
 from rich.console import Console
 from rich.table import Table
