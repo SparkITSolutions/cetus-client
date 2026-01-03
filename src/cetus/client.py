@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import platform
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
 
 import httpx

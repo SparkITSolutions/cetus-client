@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.progress import Progress, SpinnerColumn, TextColumn, TaskID
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from . import __version__
 from .client import CetusClient
