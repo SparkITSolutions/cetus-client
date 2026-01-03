@@ -11,7 +11,33 @@ on:
         default: true
 
 jobs:
+  # Run tests before publishing - gate releases on passing tests
+  test:
+    name: Pre-publish Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run linter
+        run: |
+          ruff check src/
+          ruff format --check src/
+
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short --ignore=tests/test_e2e.py
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
