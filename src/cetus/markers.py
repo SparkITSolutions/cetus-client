@@ -13,11 +13,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from .config import get_data_dir
+
+# Maximum marker file size (10KB) - prevents memory exhaustion from malicious files
+MAX_MARKER_FILE_SIZE = 10 * 1024
 
 
 def get_markers_dir() -> Path:
@@ -26,9 +31,22 @@ def get_markers_dir() -> Path:
 
 
 def _query_hash(query: str, index: str) -> str:
-    """Generate a short hash for a query to use as filename."""
+    """Generate a hash for a query to use as filename.
+
+    Uses 32 hex characters (128 bits) to minimize collision risk.
+    """
     content = f"{index}:{query}"
-    return hashlib.sha256(content.encode()).hexdigest()[:16]
+    return hashlib.sha256(content.encode()).hexdigest()[:32]
+
+
+def _set_secure_permissions(path: Path) -> None:
+    """Set file permissions to owner read-write only (0o600).
+
+    On Windows, this is a no-op as Windows uses ACLs, not Unix permissions.
+    The marker files are already protected by user directory permissions.
+    """
+    if sys.platform != "win32":
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
 
 
 @dataclass
@@ -75,20 +93,33 @@ class MarkerStore:
         return self.markers_dir / f"{index}_{hash_id}.json"
 
     def get(self, query: str, index: str) -> Marker | None:
-        """Retrieve a marker for the given query and index."""
+        """Retrieve a marker for the given query and index.
+
+        Validates file size before reading to prevent memory exhaustion.
+        """
         path = self._marker_path(query, index)
         if not path.exists():
             return None
 
         try:
+            # Check file size before reading to prevent memory exhaustion
+            file_size = path.stat().st_size
+            if file_size > MAX_MARKER_FILE_SIZE:
+                # Treat oversized file as corrupted
+                return None
+
             data = json.loads(path.read_text())
             return Marker.from_dict(data)
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, OSError):
             # Corrupted marker file, treat as missing
             return None
 
     def save(self, query: str, index: str, last_timestamp: str, last_uuid: str) -> Marker:
-        """Save or update a marker."""
+        """Save or update a marker.
+
+        The marker file is created with secure permissions (0o600 on Unix)
+        to protect query patterns from other users on the system.
+        """
         self.markers_dir.mkdir(parents=True, exist_ok=True)
 
         marker = Marker(
@@ -101,6 +132,7 @@ class MarkerStore:
 
         path = self._marker_path(query, index)
         path.write_text(json.dumps(marker.to_dict(), indent=2))
+        _set_secure_permissions(path)
         return marker
 
     def delete(self, query: str, index: str) -> bool:
@@ -112,16 +144,23 @@ class MarkerStore:
         return False
 
     def list_all(self) -> list[Marker]:
-        """List all stored markers."""
+        """List all stored markers.
+
+        Skips files that are corrupted or exceed the size limit.
+        """
         if not self.markers_dir.exists():
             return []
 
         markers = []
         for path in self.markers_dir.glob("*.json"):
             try:
+                # Skip oversized files
+                if path.stat().st_size > MAX_MARKER_FILE_SIZE:
+                    continue
+
                 data = json.loads(path.read_text())
                 markers.append(Marker.from_dict(data))
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, OSError):
                 continue  # Skip corrupted files
 
         return sorted(markers, key=lambda m: m.updated_at, reverse=True)

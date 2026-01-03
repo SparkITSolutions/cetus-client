@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the CLI client for the Cetus threat intelligence alerting API. It queries DNS records, certificate transparency logs, and alert results from the Cetus platform at `alerting.sparkits.ca`.
 
+Before running tests, ask the user for an API Key, and if provided, set the CETUS_E2E=1 and CETUS_API_KEY=<api key> environment variables so the E2E tests will run.  Otherwise if the user doesn't want to provide one, omit them and let the user know the E2E tests won't run.
+
 ## Development Commands
 
 ```bash

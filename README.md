@@ -240,6 +240,42 @@ Cetus uses Lucene query syntax:
 | `csv` | Comma-separated values |
 | `table` | Rich terminal table |
 
+## Security
+
+### Credential Storage
+
+Your API key is stored in a local configuration file:
+
+| Platform | Location |
+|----------|----------|
+| Linux | `~/.config/cetus/config.toml` |
+| macOS | `~/Library/Application Support/cetus/config.toml` |
+| Windows | `%APPDATA%\cetus\config.toml` |
+
+On Unix systems, the file is created with `0o600` permissions (owner read-write only).
+
+**Alternatively**, use an environment variable to avoid storing credentials on disk:
+
+```bash
+export CETUS_API_KEY="your-key-here"
+cetus query "host:*.example.com"
+```
+
+### Network Security
+
+- All remote connections use **HTTPS with TLS verification**
+- HTTP is only allowed for `localhost` (development use)
+- Server errors are sanitized to prevent information leakage
+
+### Local Data
+
+Query markers (for incremental updates) are stored in:
+- Linux: `~/.local/share/cetus/markers/`
+- macOS: `~/Library/Application Support/cetus/markers/`
+- Windows: `%LOCALAPPDATA%\cetus\markers/`
+
+See [SECURITY.md](SECURITY.md) for the full security policy and vulnerability reporting.
+
 ## Development
 
 ```bash
@@ -248,6 +284,9 @@ pip install -e ".[dev]"
 
 # Run tests
 pytest
+
+# Run security tests
+pytest tests/test_security.py -v
 
 # Lint
 ruff check src/

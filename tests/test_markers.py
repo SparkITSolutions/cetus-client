@@ -33,10 +33,10 @@ class TestQueryHash:
         result = _query_hash("host:*.example.com", "dns")
         assert isinstance(result, str)
 
-    def test_returns_16_character_hash(self):
-        """Hash should be 16 characters (truncated SHA256)."""
+    def test_returns_32_character_hash(self):
+        """Hash should be 32 characters (128 bits from SHA256)."""
         result = _query_hash("test query", "dns")
-        assert len(result) == 16
+        assert len(result) == 32
 
     def test_is_hex_string(self):
         """Hash should be a valid hexadecimal string."""
@@ -64,12 +64,12 @@ class TestQueryHash:
     def test_handles_special_characters(self):
         """Hash should handle queries with special characters."""
         result = _query_hash('host:"example.com" AND A:*', "dns")
-        assert len(result) == 16
+        assert len(result) == 32
 
     def test_handles_unicode(self):
         """Hash should handle unicode in queries."""
         result = _query_hash("host:example\u4e2d\u6587.com", "dns")
-        assert len(result) == 16
+        assert len(result) == 32
 
 
 class TestMarkerDataclass:

@@ -252,13 +252,13 @@ class TestCetusClientFetchPage:
 
     @pytest.fixture
     def client(self) -> CetusClient:
-        return CetusClient(api_key="test-key", host="http://test.example.com")
+        return CetusClient(api_key="test-key", host="http://localhost")
 
     def test_fetch_page_makes_post_request(self, client: CetusClient, httpx_mock):
         """_fetch_page should make POST request to /api/query/."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={"data": [], "has_more": False},
         )
 
@@ -273,7 +273,7 @@ class TestCetusClientFetchPage:
         """_fetch_page should send query, index, media in body."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={"data": [], "has_more": False},
         )
 
@@ -293,7 +293,7 @@ class TestCetusClientFetchPage:
         """_fetch_page should include pit_id and search_after when provided."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={"data": [], "has_more": False},
         )
 
@@ -318,7 +318,7 @@ class TestCetusClientFetchPage:
         """_fetch_page should raise AuthenticationError on 401."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             status_code=401,
             text="Unauthorized",
         )
@@ -331,7 +331,7 @@ class TestCetusClientFetchPage:
         """_fetch_page should raise AuthenticationError on 403."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             status_code=403,
             text="Forbidden",
         )
@@ -344,7 +344,7 @@ class TestCetusClientFetchPage:
         """_fetch_page should raise APIError on other 4xx/5xx errors."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             status_code=500,
             text="Internal Server Error",
         )
@@ -362,7 +362,7 @@ class TestCetusClientFetchPage:
         httpx_mock.add_exception(
             httpx.ConnectError("Connection refused"),
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
         )
 
         with pytest.raises(ConnectionError, match="Failed to connect"):
@@ -376,7 +376,7 @@ class TestCetusClientFetchPage:
         httpx_mock.add_exception(
             httpx.TimeoutException("Timeout"),
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
         )
 
         with pytest.raises(ConnectionError, match="timed out"):
@@ -389,13 +389,13 @@ class TestCetusClientQuery:
 
     @pytest.fixture
     def client(self) -> CetusClient:
-        return CetusClient(api_key="test-key", host="http://test.example.com")
+        return CetusClient(api_key="test-key", host="http://localhost")
 
     def test_query_returns_query_result(self, client: CetusClient, httpx_mock):
         """query should return QueryResult."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [
                     {"uuid": "1", "host": "a.com", "dns_timestamp": "2025-01-01T00:00:00Z"}
@@ -416,7 +416,7 @@ class TestCetusClientQuery:
         """query should handle empty results."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={"data": [], "has_more": False},
         )
 
@@ -431,7 +431,7 @@ class TestCetusClientQuery:
         """query should track last_uuid and last_timestamp."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [
                     {"uuid": "first", "dns_timestamp": "2025-01-01T00:00:00Z"},
@@ -451,7 +451,7 @@ class TestCetusClientQuery:
         """query should paginate through multiple pages."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [{"uuid": "1", "dns_timestamp": "2025-01-01T00:00:00Z"}],
                 "has_more": True,
@@ -461,7 +461,7 @@ class TestCetusClientQuery:
         )
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [{"uuid": "2", "dns_timestamp": "2025-01-01T01:00:00Z"}],
                 "has_more": False,
@@ -487,7 +487,7 @@ class TestCetusClientQuery:
 
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [
                     {"uuid": "skip-me", "dns_timestamp": "2025-01-01T00:00:00Z"},
@@ -509,13 +509,13 @@ class TestCetusClientQueryIter:
 
     @pytest.fixture
     def client(self) -> CetusClient:
-        return CetusClient(api_key="test-key", host="http://test.example.com")
+        return CetusClient(api_key="test-key", host="http://localhost")
 
     def test_query_iter_yields_records(self, client: CetusClient, httpx_mock):
         """query_iter should yield individual records."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [
                     {"uuid": "1"},
@@ -538,7 +538,7 @@ class TestCetusClientQueryIter:
         """query_iter should paginate automatically."""
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [{"uuid": "1"}],
                 "has_more": True,
@@ -548,7 +548,7 @@ class TestCetusClientQueryIter:
         )
         httpx_mock.add_response(
             method="POST",
-            url="http://test.example.com/api/query/",
+            url="http://localhost/api/query/",
             json={
                 "data": [{"uuid": "2"}],
                 "has_more": False,
@@ -566,13 +566,13 @@ class TestCetusClientListAlerts:
 
     @pytest.fixture
     def client(self) -> CetusClient:
-        return CetusClient(api_key="test-key", host="http://test.example.com")
+        return CetusClient(api_key="test-key", host="http://localhost")
 
     def test_list_alerts_returns_alert_list(self, client: CetusClient, httpx_mock):
         """list_alerts should return list of Alert objects."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/alerts/api/unified/?owned=true&length=1000",
+            url="http://localhost/alerts/api/unified/?owned=true&length=1000",
             json={
                 "data": [
                     {"id": 1, "alert_type": "raw", "title": "Alert 1", "owned": True},
@@ -593,7 +593,7 @@ class TestCetusClientListAlerts:
         """list_alerts should handle empty response."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/alerts/api/unified/?owned=true&length=1000",
+            url="http://localhost/alerts/api/unified/?owned=true&length=1000",
             json={"data": []},
         )
 
@@ -606,7 +606,7 @@ class TestCetusClientListAlerts:
         """list_alerts should filter by type when specified."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/alerts/api/unified/?owned=true&type_filter=raw&length=1000",
+            url="http://localhost/alerts/api/unified/?owned=true&type_filter=raw&length=1000",
             json={"data": []},
         )
 
@@ -622,13 +622,13 @@ class TestCetusClientGetAlert:
 
     @pytest.fixture
     def client(self) -> CetusClient:
-        return CetusClient(api_key="test-key", host="http://test.example.com")
+        return CetusClient(api_key="test-key", host="http://localhost")
 
     def test_get_alert_returns_alert(self, client: CetusClient, httpx_mock):
         """get_alert should return Alert object."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/alerts/api/unified/123/",
+            url="http://localhost/alerts/api/unified/123/",
             json={
                 "id": 123,
                 "alert_type": "raw",
@@ -648,7 +648,7 @@ class TestCetusClientGetAlert:
         """get_alert should return None when alert not found."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/alerts/api/unified/999/",
+            url="http://localhost/alerts/api/unified/999/",
             status_code=404,
         )
 
@@ -663,13 +663,13 @@ class TestCetusClientGetAlertResults:
 
     @pytest.fixture
     def client(self) -> CetusClient:
-        return CetusClient(api_key="test-key", host="http://test.example.com")
+        return CetusClient(api_key="test-key", host="http://localhost")
 
     def test_get_alert_results_returns_list(self, client: CetusClient, httpx_mock):
         """get_alert_results should return list of result records."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/api/alert_results/123",
+            url="http://localhost/api/alert_results/123",
             json={
                 "data": [
                     {"uuid": "r1", "host": "match.com"},
@@ -688,7 +688,7 @@ class TestCetusClientGetAlertResults:
         """get_alert_results should pass since parameter."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/api/alert_results/123?since=2025-01-01T00%3A00%3A00Z",
+            url="http://localhost/api/alert_results/123?since=2025-01-01T00%3A00%3A00Z",
             json={"data": []},
         )
 
@@ -702,7 +702,7 @@ class TestCetusClientGetAlertResults:
         """get_alert_results should handle empty results."""
         httpx_mock.add_response(
             method="GET",
-            url="http://test.example.com/api/alert_results/123",
+            url="http://localhost/api/alert_results/123",
             json={"data": []},
         )
 

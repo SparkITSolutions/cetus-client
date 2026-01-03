@@ -10,6 +10,7 @@ Configuration priority (highest to lowest):
 from __future__ import annotations
 
 import os
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,16 @@ def _escape_toml_string(value: str) -> str:
     """Escape special characters for TOML basic string format."""
     # TOML requires escaping backslashes and double quotes in basic strings
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _set_secure_permissions(path: Path) -> None:
+    """Set file permissions to owner read-write only (0o600).
+
+    On Windows, this is a no-op as Windows uses ACLs, not Unix permissions.
+    The config file is already protected by user directory permissions.
+    """
+    if sys.platform != "win32":
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
 
 
 def get_config_dir() -> Path:
@@ -140,7 +151,11 @@ class Config:
                 raise ConfigurationError(f"Invalid CETUS_SINCE_DAYS value: {since_days}")
 
     def save(self) -> None:
-        """Save current configuration to file."""
+        """Save current configuration to file.
+
+        The config file is created with secure permissions (0o600 on Unix)
+        to protect the API key from other users on the system.
+        """
         config_file = get_config_file()
         config_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -155,6 +170,7 @@ class Config:
             lines.append(f"since_days = {self.since_days}")
 
         config_file.write_text("\n".join(lines) + "\n" if lines else "")
+        _set_secure_permissions(config_file)
 
     def require_api_key(self) -> str:
         """Get the API key, raising an error if not configured."""

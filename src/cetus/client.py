@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import logging
+import platform
+import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Callable, Literal
+from urllib.parse import urlparse
 
 import httpx
 
-from .exceptions import APIError, AuthenticationError, ConnectionError
+from . import __version__
+from .exceptions import APIError, AuthenticationError, ConfigurationError, ConnectionError
 from .markers import Marker
 
 if TYPE_CHECKING:
@@ -21,6 +25,23 @@ logger = logging.getLogger(__name__)
 Index = Literal["dns", "certstream", "alerting"]
 Media = Literal["nvme", "all"]
 AlertType = Literal["raw", "terms", "structured"]
+
+# Valid parameter values for runtime validation
+VALID_INDICES: frozenset[str] = frozenset({"dns", "certstream", "alerting"})
+VALID_MEDIA: frozenset[str] = frozenset({"nvme", "all"})
+
+# Hosts allowed to use HTTP (development only)
+LOCALHOST_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# Rate limit retry settings
+MAX_RATE_LIMIT_RETRIES = 3
+DEFAULT_RETRY_AFTER = 60  # seconds
+
+# Progress callback type: receives (records_fetched, pages_fetched)
+ProgressCallback = Callable[[int, int], None]
+
+# User-Agent for API requests
+USER_AGENT = f"cetus-client/{__version__} (Python {platform.python_version()}; {platform.system()})"
 
 
 @dataclass
@@ -74,6 +95,7 @@ class CetusClient:
         self.host = host
         self.timeout = timeout
         self._client: httpx.Client | None = None
+        self._base_url: str | None = None
 
     @classmethod
     def from_config(cls, config: Config) -> CetusClient:
@@ -85,21 +107,76 @@ class CetusClient:
         )
 
     @property
+    def _masked_api_key(self) -> str:
+        """Return masked API key for logging (shows first 4 chars only)."""
+        if not self.api_key:
+            return "<none>"
+        if len(self.api_key) <= 4:
+            return "***"
+        return f"{self.api_key[:4]}***"
+
+    def _get_base_url(self) -> str:
+        """Get the base URL, validating protocol security.
+
+        HTTP is only allowed for localhost addresses (development).
+        All other hosts require HTTPS.
+
+        Raises:
+            ConfigurationError: If HTTP is used with a non-localhost host
+        """
+        if self._base_url is not None:
+            return self._base_url
+
+        if self.host.startswith("http://"):
+            parsed = urlparse(self.host)
+            hostname = parsed.hostname or ""
+            if hostname not in LOCALHOST_HOSTS:
+                raise ConfigurationError(
+                    f"HTTP is not allowed for remote hosts (got {hostname}). "
+                    f"Use https://{parsed.netloc} instead."
+                )
+            logger.warning(
+                "Using insecure HTTP connection to %s (development only)",
+                hostname,
+            )
+            self._base_url = self.host
+        elif self.host.startswith("https://"):
+            self._base_url = self.host
+        else:
+            self._base_url = f"https://{self.host}"
+
+        return self._base_url
+
+    def _validate_params(self, index: str, media: str) -> None:
+        """Validate query parameters.
+
+        Raises:
+            ValueError: If index or media is not a valid value
+        """
+        if index not in VALID_INDICES:
+            raise ValueError(
+                f"Invalid index: {index!r}. Must be one of: {', '.join(sorted(VALID_INDICES))}"
+            )
+        if media not in VALID_MEDIA:
+            raise ValueError(
+                f"Invalid media: {media!r}. Must be one of: {', '.join(sorted(VALID_MEDIA))}"
+            )
+
+    @property
     def client(self) -> httpx.Client:
         """Lazy-initialize the HTTP client."""
         if self._client is None:
-            # Support explicit protocol in host (e.g., http://localhost:8000)
-            if self.host.startswith("http://") or self.host.startswith("https://"):
-                base_url = self.host
-            else:
-                base_url = f"https://{self.host}"
+            base_url = self._get_base_url()
             self._client = httpx.Client(
                 base_url=base_url,
                 headers={
                     "Authorization": f"Api-Key {self.api_key}",
                     "Accept": "application/json",
+                    "User-Agent": USER_AGENT,
                 },
                 timeout=self.timeout,
+                # Explicit TLS verification (httpx default, but being explicit)
+                verify=True,
             )
         return self._client
 
@@ -134,6 +211,27 @@ class CetusClient:
         else:
             return ""
 
+    def _handle_error_response(self, response: httpx.Response) -> None:
+        """Handle error responses, sanitizing error messages.
+
+        Raises appropriate exceptions for error status codes.
+        """
+        if response.status_code == 401:
+            raise AuthenticationError(
+                "Invalid API key. The API key system was updated - you may need to "
+                "generate a new key at Profile -> Manage API Key"
+            )
+        elif response.status_code == 403:
+            raise AuthenticationError("Access denied - check your permissions")
+        elif response.status_code >= 400:
+            # Log full error for debugging, but don't expose to user
+            logger.debug("API error response: %s", response.text[:500])
+            # Provide sanitized error message
+            raise APIError(
+                f"Server returned error {response.status_code}",
+                status_code=response.status_code,
+            )
+
     def _fetch_page(
         self,
         query: str,
@@ -142,7 +240,10 @@ class CetusClient:
         pit_id: str | None = None,
         search_after: list | None = None,
     ) -> dict:
-        """Fetch a single page of results from the API."""
+        """Fetch a single page of results from the API.
+
+        Includes rate limit handling with automatic retry.
+        """
         body = {
             "query": query,
             "index": index,
@@ -155,28 +256,36 @@ class CetusClient:
 
         logger.debug("Request body: %s", body)
 
-        try:
-            response = self.client.post("/api/query/", json=body)
-        except httpx.ConnectError as e:
-            raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e
-        except httpx.TimeoutException as e:
-            raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                response = self.client.post("/api/query/", json=body)
+            except httpx.ConnectError as e:
+                raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e
+            except httpx.TimeoutException as e:
+                raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
 
-        logger.debug("Response status: %d", response.status_code)
+            logger.debug("Response status: %d", response.status_code)
 
-        if response.status_code == 401:
-            raise AuthenticationError(
-                "Invalid API key. The API key system was updated - you may need to "
-                "generate a new key at Profile -> Manage API Key"
-            )
-        elif response.status_code == 403:
-            raise AuthenticationError("Access denied - check your permissions")
-        elif response.status_code >= 400:
-            raise APIError(
-                f"API error: {response.text[:500]}",
-                status_code=response.status_code,
-            )
+            # Handle rate limiting with retry
+            if response.status_code == 429:
+                if attempt >= MAX_RATE_LIMIT_RETRIES:
+                    raise APIError(
+                        "Rate limit exceeded - too many requests",
+                        status_code=429,
+                    )
+                retry_after = int(response.headers.get("Retry-After", DEFAULT_RETRY_AFTER))
+                logger.warning(
+                    "Rate limited, waiting %d seconds before retry (attempt %d/%d)",
+                    retry_after,
+                    attempt + 1,
+                    MAX_RATE_LIMIT_RETRIES,
+                )
+                time.sleep(retry_after)
+                continue
 
+            break
+
+        self._handle_error_response(response)
         return response.json()
 
     def query(
@@ -186,6 +295,7 @@ class CetusClient:
         media: Media = "nvme",
         since_days: int | None = 7,
         marker: Marker | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> QueryResult:
         """Execute a query and return all results.
 
@@ -195,10 +305,16 @@ class CetusClient:
             media: Storage tier preference (nvme for fast, all for complete)
             since_days: How many days back to search (ignored if marker is set)
             marker: Resume from this marker position
+            progress_callback: Optional callback called with (records_fetched, pages_fetched)
+                after each page is processed
 
         Returns:
             QueryResult containing all fetched data
+
+        Raises:
+            ValueError: If index or media is invalid
         """
+        self._validate_params(index, media)
         all_data: list[dict] = []
         pages_fetched = 0
         last_uuid: str | None = None
@@ -247,6 +363,10 @@ class CetusClient:
                 last_uuid = all_data[-1].get("uuid")
                 last_timestamp = all_data[-1].get(timestamp_field)
 
+            # Report progress
+            if progress_callback:
+                progress_callback(len(all_data), pages_fetched)
+
             # Check if there are more pages
             if not response.get("has_more", False):
                 break
@@ -272,7 +392,12 @@ class CetusClient:
         pit_id: str | None = None,
         search_after: list | None = None,
     ) -> dict:
-        """Fetch a single page of results from the API (async version)."""
+        """Fetch a single page of results from the API (async version).
+
+        Includes rate limit handling with automatic retry.
+        """
+        import asyncio
+
         body = {
             "query": query,
             "index": index,
@@ -285,41 +410,46 @@ class CetusClient:
 
         logger.debug("Async request body: %s", body)
 
-        # Support explicit protocol in host
-        if self.host.startswith("http://") or self.host.startswith("https://"):
-            base_url = self.host
-        else:
-            base_url = f"https://{self.host}"
+        base_url = self._get_base_url()
 
-        try:
-            response = await client.post(
-                f"{base_url}/api/query/",
-                json=body,
-                headers={
-                    "Authorization": f"Api-Key {self.api_key}",
-                    "Accept": "application/json",
-                },
-            )
-        except httpx.ConnectError as e:
-            raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e
-        except httpx.TimeoutException as e:
-            raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                response = await client.post(
+                    f"{base_url}/api/query/",
+                    json=body,
+                    headers={
+                        "Authorization": f"Api-Key {self.api_key}",
+                        "Accept": "application/json",
+                        "User-Agent": USER_AGENT,
+                    },
+                )
+            except httpx.ConnectError as e:
+                raise ConnectionError(f"Failed to connect to {self.host}: {e}") from e
+            except httpx.TimeoutException as e:
+                raise ConnectionError(f"Request timed out after {self.timeout}s: {e}") from e
 
-        logger.debug("Response status: %d", response.status_code)
+            logger.debug("Response status: %d", response.status_code)
 
-        if response.status_code == 401:
-            raise AuthenticationError(
-                "Invalid API key. The API key system was updated - you may need to "
-                "generate a new key at Profile -> Manage API Key"
-            )
-        elif response.status_code == 403:
-            raise AuthenticationError("Access denied - check your permissions")
-        elif response.status_code >= 400:
-            raise APIError(
-                f"API error: {response.text[:500]}",
-                status_code=response.status_code,
-            )
+            # Handle rate limiting with retry
+            if response.status_code == 429:
+                if attempt >= MAX_RATE_LIMIT_RETRIES:
+                    raise APIError(
+                        "Rate limit exceeded - too many requests",
+                        status_code=429,
+                    )
+                retry_after = int(response.headers.get("Retry-After", DEFAULT_RETRY_AFTER))
+                logger.warning(
+                    "Rate limited, waiting %d seconds before retry (attempt %d/%d)",
+                    retry_after,
+                    attempt + 1,
+                    MAX_RATE_LIMIT_RETRIES,
+                )
+                await asyncio.sleep(retry_after)
+                continue
 
+            break
+
+        self._handle_error_response(response)
         return response.json()
 
     async def query_async(
@@ -329,6 +459,7 @@ class CetusClient:
         media: Media = "nvme",
         since_days: int | None = 7,
         marker: Marker | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> QueryResult:
         """Execute a query and return all results (async version).
 
@@ -341,10 +472,16 @@ class CetusClient:
             media: Storage tier preference (nvme for fast, all for complete)
             since_days: How many days back to search (ignored if marker is set)
             marker: Resume from this marker position
+            progress_callback: Optional callback called with (records_fetched, pages_fetched)
+                after each page is processed
 
         Returns:
             QueryResult containing all fetched data
+
+        Raises:
+            ValueError: If index or media is invalid
         """
+        self._validate_params(index, media)
         all_data: list[dict] = []
         pages_fetched = 0
         last_uuid: str | None = None
@@ -396,6 +533,10 @@ class CetusClient:
                     last_uuid = all_data[-1].get("uuid")
                     last_timestamp = all_data[-1].get(timestamp_field)
 
+                # Report progress
+                if progress_callback:
+                    progress_callback(len(all_data), pages_fetched)
+
                 # Check if there are more pages
                 if not response.get("has_more", False):
                     break
@@ -424,7 +565,11 @@ class CetusClient:
 
         This is more memory-efficient for large result sets.
         Same arguments as query().
+
+        Raises:
+            ValueError: If index or media is invalid
         """
+        self._validate_params(index, media)
         pit_id: str | None = None
         search_after: list | None = None
         marker_uuid = marker.last_uuid if marker else None
@@ -485,8 +630,13 @@ class CetusClient:
 
         Yields:
             dict: Individual records as they arrive from the server
+
+        Raises:
+            ValueError: If index or media is invalid
         """
         import json
+
+        self._validate_params(index, media)
 
         marker_uuid = marker.last_uuid if marker else None
         past_marker = marker_uuid is None
@@ -502,12 +652,7 @@ class CetusClient:
 
         logger.debug("Streaming request body: %s", body)
 
-        # Support explicit protocol in host
-        if self.host.startswith("http://") or self.host.startswith("https://"):
-            base_url = self.host
-        else:
-            base_url = f"https://{self.host}"
-
+        base_url = self._get_base_url()
         url = f"{base_url}/api/query/stream/"
 
         try:
@@ -523,8 +668,10 @@ class CetusClient:
                     "Authorization": f"Api-Key {self.api_key}",
                     # Primary: ndjson for streaming, fallback: json for DRF error responses
                     "Accept": "application/x-ndjson, application/json;q=0.9",
+                    "User-Agent": USER_AGENT,
                 },
                 timeout=timeout,
+                verify=True,
             ) as response:
                 if response.status_code == 401:
                     raise AuthenticationError(
@@ -535,8 +682,10 @@ class CetusClient:
                     raise AuthenticationError("Access denied - check your permissions")
                 elif response.status_code >= 400:
                     response.read()
+                    # Log full error, show sanitized message
+                    logger.debug("Streaming API error: %s", response.text[:500])
                     raise APIError(
-                        f"API error: {response.text[:500]}",
+                        f"Server returned error {response.status_code}",
                         status_code=response.status_code,
                     )
 
@@ -586,8 +735,13 @@ class CetusClient:
 
         Yields:
             dict: Individual records as they arrive from the server
+
+        Raises:
+            ValueError: If index or media is invalid
         """
         import json
+
+        self._validate_params(index, media)
 
         marker_uuid = marker.last_uuid if marker else None
         past_marker = marker_uuid is None
@@ -603,16 +757,11 @@ class CetusClient:
 
         logger.debug("Async streaming request body: %s", body)
 
-        # Support explicit protocol in host
-        if self.host.startswith("http://") or self.host.startswith("https://"):
-            base_url = self.host
-        else:
-            base_url = f"https://{self.host}"
-
+        base_url = self._get_base_url()
         url = f"{base_url}/api/query/stream/"
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=True) as client:
                 async with client.stream(
                     "POST",
                     url,
@@ -621,6 +770,7 @@ class CetusClient:
                         "Authorization": f"Api-Key {self.api_key}",
                         # Primary: ndjson for streaming, fallback: json for DRF error responses
                         "Accept": "application/x-ndjson, application/json;q=0.9",
+                        "User-Agent": USER_AGENT,
                     },
                 ) as response:
                     if response.status_code == 401:
@@ -632,8 +782,10 @@ class CetusClient:
                         raise AuthenticationError("Access denied - check your permissions")
                     elif response.status_code >= 400:
                         await response.aread()
+                        # Log full error, show sanitized message
+                        logger.debug("Async streaming API error: %s", response.text[:500])
                         raise APIError(
-                            f"API error: {response.text[:500]}",
+                            f"Server returned error {response.status_code}",
                             status_code=response.status_code,
                         )
 
@@ -706,8 +858,9 @@ class CetusClient:
                 "Access denied - you may need AlertingEnabled group membership"
             )
         elif response.status_code >= 400:
+            logger.debug("List alerts API error: %s", response.text[:500])
             raise APIError(
-                f"API error: {response.text[:500]}",
+                f"Server returned error {response.status_code}",
                 status_code=response.status_code,
             )
 
@@ -746,8 +899,9 @@ class CetusClient:
         elif response.status_code == 404:
             return None
         elif response.status_code >= 400:
+            logger.debug("Get alert API error: %s", response.text[:500])
             raise APIError(
-                f"API error: {response.text[:500]}",
+                f"Server returned error {response.status_code}",
                 status_code=response.status_code,
             )
 
@@ -800,13 +954,15 @@ class CetusClient:
                 "Access denied - you don't have permission to view this alert"
             )
         elif response.status_code == 400:
+            logger.debug("Get alert results bad request: %s", response.text[:500])
             raise APIError(
-                f"Bad request: {response.text[:500]}",
+                "Bad request - check alert ID and parameters",
                 status_code=response.status_code,
             )
         elif response.status_code >= 400:
+            logger.debug("Get alert results API error: %s", response.text[:500])
             raise APIError(
-                f"API error: {response.text[:500]}",
+                f"Server returned error {response.status_code}",
                 status_code=response.status_code,
             )
 
