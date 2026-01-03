@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cetus-client"
-version = "1.0.0"
+version = "0.0.1"
 description = "CLI client for the Cetus threat intelligence alerting API"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "SparkIT" }]
 keywords = ["security", "threat-intelligence", "dns", "alerting"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
@@ -22,14 +22,15 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
 ]
 dependencies = [
-    "click>=8.1",
-    "httpx>=0.25",
-    "rich>=13.0",
-    "platformdirs>=4.0",
-    "tomli>=2.0; python_version < '3.11'",
+    "click>=8.1,<9",
+    "httpx>=0.25,<1",
+    "rich>=13.0,<14",
+    "platformdirs>=4.0,<5",
+    "tomli>=2.0,<3; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

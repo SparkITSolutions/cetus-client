@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, TaskID
 
 from . import __version__
 from .client import CetusClient
@@ -64,6 +64,19 @@ def execute_query_and_output(
 
     formatter = get_formatter(output_format)
 
+    # Progress state shared between callback and display
+    progress_state = {"records": 0, "pages": 0, "task_id": None, "progress": None}
+
+    def on_progress(records: int, pages: int) -> None:
+        """Update progress display with current record count."""
+        progress_state["records"] = records
+        progress_state["pages"] = pages
+        if progress_state["progress"] and progress_state["task_id"] is not None:
+            progress_state["progress"].update(
+                progress_state["task_id"],
+                description=f"Fetched {records:,} records (page {pages})...",
+            )
+
     async def run_query() -> QueryResult:
         """Async inner function for responsive interrupt handling."""
         client = CetusClient.from_config(config)
@@ -74,6 +87,7 @@ def execute_query_and_output(
                 media=media,
                 since_days=since_days,
                 marker=marker,
+                progress_callback=on_progress,
             )
         finally:
             client.close()
@@ -86,7 +100,9 @@ def execute_query_and_output(
         console=console,
         transient=True,
     ) as progress:
-        progress.add_task("Querying...", total=None)
+        task_id = progress.add_task("Querying...", total=None)
+        progress_state["progress"] = progress
+        progress_state["task_id"] = task_id
 
         try:
             result = asyncio.run(run_query())
@@ -114,6 +130,7 @@ def execute_query_and_output(
             stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
             formatter.format_stream(result.data, stdout)
             stdout.flush()
+            stdout.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
         console.print(
             f"\n[dim]{result.total_fetched} records in {elapsed:.2f}s[/dim]", highlight=False
         )
@@ -260,6 +277,7 @@ def execute_streaming_query(
                 out_file.close()
             else:
                 out_file.flush()
+                out_file.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
             client.close()
 
         return count, last_uuid, last_timestamp, interrupted
@@ -723,6 +741,7 @@ def alerts_results(
                 stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
                 formatter.format_stream(results, stdout)
                 stdout.flush()
+                stdout.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
 
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -871,6 +890,79 @@ def alerts_backtest(
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted[/yellow]")
         sys.exit(130)
+
+
+@main.group()
+def completion() -> None:
+    """Generate shell completion scripts.
+
+    Shell completion provides tab-completion for commands, options,
+    and arguments. After generating a script, follow the instructions
+    to install it for your shell.
+    """
+
+
+@completion.command("bash")
+def completion_bash() -> None:
+    """Generate bash completion script.
+
+    \b
+    To install, add this to ~/.bashrc:
+        eval "$(_CETUS_COMPLETE=bash_source cetus)"
+
+    Or save to a file:
+        cetus completion bash > ~/.local/share/bash-completion/completions/cetus
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["cetus"],
+        env={**dict(__import__("os").environ), "_CETUS_COMPLETE": "bash_source"},
+        capture_output=True,
+        text=True,
+    )
+    click.echo(result.stdout)
+
+
+@completion.command("zsh")
+def completion_zsh() -> None:
+    """Generate zsh completion script.
+
+    \b
+    To install, add this to ~/.zshrc:
+        eval "$(_CETUS_COMPLETE=zsh_source cetus)"
+
+    Or save to a file:
+        cetus completion zsh > ~/.zfunc/_cetus
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["cetus"],
+        env={**dict(__import__("os").environ), "_CETUS_COMPLETE": "zsh_source"},
+        capture_output=True,
+        text=True,
+    )
+    click.echo(result.stdout)
+
+
+@completion.command("fish")
+def completion_fish() -> None:
+    """Generate fish completion script.
+
+    \b
+    To install:
+        cetus completion fish > ~/.config/fish/completions/cetus.fish
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["cetus"],
+        env={**dict(__import__("os").environ), "_CETUS_COMPLETE": "fish_source"},
+        capture_output=True,
+        text=True,
+    )
+    click.echo(result.stdout)
 
 
 if __name__ == "__main__":
