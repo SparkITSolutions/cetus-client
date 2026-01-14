@@ -48,7 +48,12 @@ def get_config_dir() -> Path:
 
 
 def get_data_dir() -> Path:
-    """Get the platform-appropriate data directory (for markers)."""
+    """Get the platform-appropriate data directory (for markers).
+
+    Respects CETUS_DATA_DIR environment variable for testing.
+    """
+    if env_dir := os.environ.get("CETUS_DATA_DIR"):
+        return Path(env_dir)
     return Path(platformdirs.user_data_dir(APP_NAME))
 
 
