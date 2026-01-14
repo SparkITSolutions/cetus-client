@@ -249,13 +249,9 @@ def execute_query_and_output(
     is_incremental = marker is not None
     if output_file:
         file_existed = _file_has_content(output_file)
-        records_written = _write_or_append(
-            result.data, output_file, output_format, is_incremental
-        )
+        records_written = _write_or_append(result.data, output_file, output_format, is_incremental)
         if records_written == 0 and is_incremental:
-            console.print(
-                f"[dim]No new records (file unchanged) in {elapsed:.2f}s[/dim]"
-            )
+            console.print(f"[dim]No new records (file unchanged) in {elapsed:.2f}s[/dim]")
         elif is_incremental and file_existed:
             console.print(
                 f"[green]Appended {records_written} records to {output_file} "
@@ -263,8 +259,7 @@ def execute_query_and_output(
             )
         else:
             console.print(
-                f"[green]Wrote {records_written} records to {output_file} "
-                f"in {elapsed:.2f}s[/green]"
+                f"[green]Wrote {records_written} records to {output_file} in {elapsed:.2f}s[/green]"
             )
     else:
         # Write to stdout - use stream for proper encoding handling
