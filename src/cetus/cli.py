@@ -48,7 +48,7 @@ def _append_csv(data: list[dict], output_file: Path) -> int:
     # Get fieldnames from existing file or from data
     if _file_has_content(output_file):
         # Read existing header
-        with open(output_file, "r", encoding="utf-8", newline="") as f:
+        with open(output_file, encoding="utf-8", newline="") as f:
             reader = csv.reader(f)
             fieldnames = next(reader, None)
         if not fieldnames:
@@ -76,7 +76,7 @@ def _append_json(data: list[dict], output_file: Path) -> int:
 
     if _file_has_content(output_file):
         # Read existing data, extend, rewrite
-        with open(output_file, "r", encoding="utf-8") as f:
+        with open(output_file, encoding="utf-8") as f:
             try:
                 existing = json.load(f)
                 if not isinstance(existing, list):
@@ -102,7 +102,6 @@ def _append_table(data: list[dict], output_file: Path) -> int:
 
     # Table format requires full rewrite - read existing, merge, rewrite
     # Note: Table format is not ideal for file accumulation
-    existing = []
     if _file_has_content(output_file):
         # For table format, we can't easily parse Rich tables back
         # Just warn and overwrite with new data only
@@ -377,7 +376,7 @@ def execute_streaming_query(
                 if is_incremental and file_existed:
                     if output_format == "csv":
                         # Read existing header for CSV append
-                        with open(output_file, "r", encoding="utf-8", newline="") as f:
+                        with open(output_file, encoding="utf-8", newline="") as f:
                             reader = csv.reader(f)
                             csv_fieldnames = next(reader, None)
                     out_file = open(output_file, "a", encoding="utf-8", newline="")
