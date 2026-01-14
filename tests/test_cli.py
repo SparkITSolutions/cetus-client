@@ -790,3 +790,184 @@ class TestIncrementalQueryAppend:
             assert '"uuid": "3"' in final_content
             lines = final_content.strip().split("\n")
             assert len(lines) == 1
+
+
+class TestOutputPrefix:
+    """Tests for --output-prefix timestamped file output."""
+
+    @pytest.fixture
+    def mock_query_result(self) -> QueryResult:
+        """Sample query results."""
+        return QueryResult(
+            data=[
+                {"uuid": "1", "host": "a.example.com", "A": "1.1.1.1", "dns_timestamp": "2025-01-01T00:00:00Z"},
+                {"uuid": "2", "host": "b.example.com", "A": "2.2.2.2", "dns_timestamp": "2025-01-01T01:00:00Z"},
+            ],
+            total_fetched=2,
+            last_uuid="2",
+            last_timestamp="2025-01-01T01:00:00Z",
+            pages_fetched=1,
+        )
+
+    @pytest.fixture
+    def mock_query_result_empty(self) -> QueryResult:
+        """Empty result."""
+        return QueryResult(
+            data=[],
+            total_fetched=0,
+            last_uuid=None,
+            last_timestamp=None,
+            pages_fetched=1,
+        )
+
+    def test_output_prefix_creates_timestamped_file(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result: QueryResult,
+    ):
+        """--output-prefix should create a timestamped file."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        prefix = str(tmp_path / "results")
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(main, [
+                "query", "host:*", "-p", prefix, "--format", "jsonl",
+                "--api-key", "test-key"
+            ])
+            assert result.exit_code == 0
+            assert "Wrote 2 records" in result.output
+
+            # Check that a timestamped file was created
+            files = list(tmp_path.glob("results_*.jsonl"))
+            assert len(files) == 1
+            assert files[0].name.startswith("results_")
+            assert files[0].suffix == ".jsonl"
+
+            # Verify content
+            content = files[0].read_text()
+            assert '"uuid": "1"' in content
+            assert '"uuid": "2"' in content
+
+    def test_output_prefix_no_file_on_zero_results(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result_empty: QueryResult,
+    ):
+        """--output-prefix should not create file when there are no records."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        prefix = str(tmp_path / "results")
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result_empty
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(main, [
+                "query", "host:*", "-p", prefix, "--format", "jsonl",
+                "--api-key", "test-key"
+            ])
+            assert result.exit_code == 0
+            assert "No new records" in result.output
+
+            # No file should be created
+            files = list(tmp_path.glob("results_*.jsonl"))
+            assert len(files) == 0
+
+    def test_output_prefix_uses_markers(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result: QueryResult,
+    ):
+        """--output-prefix should save markers for incremental queries."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        markers_dir = data_dir / "markers"
+        markers_dir.mkdir()
+        prefix = str(tmp_path / "results")
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.markers.get_markers_dir", return_value=markers_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(main, [
+                "query", "host:*", "-p", prefix, "--format", "jsonl",
+                "--api-key", "test-key"
+            ])
+            assert result.exit_code == 0
+
+            # Check that a marker was saved
+            marker_files = list(markers_dir.glob("*.json"))
+            assert len(marker_files) == 1
+
+    def test_output_prefix_format_determines_extension(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result: QueryResult,
+    ):
+        """--output-prefix should use format to determine file extension."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        prefix = str(tmp_path / "results")
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(main, [
+                "query", "host:*", "-p", prefix, "--format", "csv",
+                "--api-key", "test-key"
+            ])
+            assert result.exit_code == 0
+
+            # Check CSV extension
+            files = list(tmp_path.glob("results_*.csv"))
+            assert len(files) == 1
+
+    def test_output_and_output_prefix_mutually_exclusive(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ):
+        """--output and --output-prefix cannot be used together."""
+        output_file = tmp_path / "results.jsonl"
+        prefix = str(tmp_path / "results")
+
+        result = runner.invoke(main, [
+            "query", "host:*", "-o", str(output_file), "-p", prefix,
+            "--api-key", "test-key"
+        ])
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output

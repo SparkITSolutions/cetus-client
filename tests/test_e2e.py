@@ -11,7 +11,7 @@ Environment variables:
 Run with:
     CETUS_E2E_TEST=1 CETUS_API_KEY=your-key pytest tests/test_e2e.py -v
 
-Expected duration: ~45-60 seconds for all 15 tests
+Expected duration: ~60-90 seconds for all 21 tests
 
 Query optimization:
 - Uses host:microsoft.com which has frequent data and returns quickly
@@ -411,3 +411,273 @@ class TestCLICommands:
         result = runner.invoke(main, ["config", "show"])
         # Should succeed even without config
         assert result.exit_code in (0, 1)
+
+
+class TestFileOutputModes:
+    """E2E tests for file output modes (-o and -p).
+
+    Tests the incremental query functionality with real data.
+    """
+
+    DATA_QUERY = "host:microsoft.com"
+
+    def test_cli_output_file_creates_file(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test -o creates output file with real data."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "results.jsonl"
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "--format", "jsonl",
+                "-o", str(output_file),
+                "--no-marker",  # Don't save marker for this test
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result.exit_code == 0
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert len(content) > 0
+        # Should have JSONL content (one JSON object per line)
+        lines = content.strip().split("\n")
+        assert len(lines) > 0
+
+    def test_cli_output_prefix_creates_timestamped_file(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test -p creates timestamped output file."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        prefix = str(tmp_path / "results")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "--format", "jsonl",
+                "-p", prefix,
+                "--no-marker",
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Should have created a timestamped file
+        files = list(tmp_path.glob("results_*.jsonl"))
+        assert len(files) == 1
+        assert files[0].stat().st_size > 0
+
+    def test_cli_output_csv_format(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test CSV output format works correctly."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "results.csv"
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "--format", "csv",
+                "-o", str(output_file),
+                "--no-marker",
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result.exit_code == 0
+        assert output_file.exists()
+
+        content = output_file.read_text()
+        lines = content.strip().split("\n")
+        # Should have header + at least one data row
+        assert len(lines) >= 2
+        # First line should be CSV header
+        assert "uuid" in lines[0] or "host" in lines[0]
+
+    def test_cli_streaming_with_output_file(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test --stream with -o creates file."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "streamed.jsonl"
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "--stream",
+                "-o", str(output_file),
+                "--no-marker",
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result.exit_code == 0
+        assert output_file.exists()
+        assert output_file.stat().st_size > 0
+
+
+class TestIncrementalQueries:
+    """E2E tests for incremental query behavior with markers.
+
+    Tests that markers work correctly across multiple query runs.
+    """
+
+    DATA_QUERY = "host:microsoft.com"
+
+    def test_marker_saved_and_used(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test that markers are saved and affect subsequent queries."""
+        from pathlib import Path
+
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        # Use isolated marker directory
+        markers_dir = tmp_path / "markers"
+        markers_dir.mkdir()
+
+        output_file = tmp_path / "results.jsonl"
+
+        runner = CliRunner(
+            env={"CETUS_DATA_DIR": str(tmp_path)}
+        )
+
+        # First run - should fetch data and save marker
+        result1 = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "--format", "jsonl",
+                "-o", str(output_file),
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result1.exit_code == 0
+        assert "Wrote" in result1.output
+
+        first_size = output_file.stat().st_size
+        assert first_size > 0
+
+        # Check marker was saved
+        marker_files = list(tmp_path.glob("markers/*.json"))
+        assert len(marker_files) == 1
+
+        # Second run - should use marker (may append or show "No new records")
+        result2 = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "--format", "jsonl",
+                "-o", str(output_file),
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result2.exit_code == 0
+        # Should either append or report no new records
+        assert "Appended" in result2.output or "No new records" in result2.output
+
+    def test_output_prefix_with_markers(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test -p mode saves markers for incremental queries."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        prefix = str(tmp_path / "export")
+
+        runner = CliRunner(
+            env={"CETUS_DATA_DIR": str(tmp_path)}
+        )
+
+        # First run
+        result1 = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "-p", prefix,
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result1.exit_code == 0
+
+        # Should have created one timestamped file
+        files1 = list(tmp_path.glob("export_*.jsonl"))
+        assert len(files1) == 1
+
+        # Marker should be saved
+        marker_files = list(tmp_path.glob("markers/*.json"))
+        assert len(marker_files) == 1
+
+        # Second run (immediately after - likely no new data)
+        import time
+        time.sleep(1)  # Ensure different timestamp
+
+        result2 = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index", "dns",
+                "--since-days", "7",
+                "-p", prefix,
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result2.exit_code == 0
+
+        # If no new data, no new file created
+        # If new data, a second file is created
+        files2 = list(tmp_path.glob("export_*.jsonl"))
+        # Should have 1 or 2 files depending on whether new data arrived
+        assert len(files2) >= 1

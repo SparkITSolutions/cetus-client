@@ -30,12 +30,19 @@ def get_markers_dir() -> Path:
     return get_data_dir() / "markers"
 
 
-def _query_hash(query: str, index: str) -> str:
+def _query_hash(query: str, index: str, mode: str | None = None) -> str:
     """Generate a hash for a query to use as filename.
 
     Uses 32 hex characters (128 bits) to minimize collision risk.
+
+    Args:
+        query: The search query string
+        index: The index being queried (dns, certstream, alerting)
+        mode: Optional output mode ("file" or "prefix") to differentiate markers
     """
     content = f"{index}:{query}"
+    if mode:
+        content = f"{content}:{mode}"
     return hashlib.sha256(content.encode()).hexdigest()[:32]
 
 
@@ -87,17 +94,22 @@ class MarkerStore:
     def __init__(self, markers_dir: Path | None = None):
         self.markers_dir = markers_dir or get_markers_dir()
 
-    def _marker_path(self, query: str, index: str) -> Path:
+    def _marker_path(self, query: str, index: str, mode: str | None = None) -> Path:
         """Get the file path for a specific marker."""
-        hash_id = _query_hash(query, index)
+        hash_id = _query_hash(query, index, mode)
         return self.markers_dir / f"{index}_{hash_id}.json"
 
-    def get(self, query: str, index: str) -> Marker | None:
+    def get(self, query: str, index: str, mode: str | None = None) -> Marker | None:
         """Retrieve a marker for the given query and index.
+
+        Args:
+            query: The search query string
+            index: The index being queried
+            mode: Output mode ("file" or "prefix") - different modes have separate markers
 
         Validates file size before reading to prevent memory exhaustion.
         """
-        path = self._marker_path(query, index)
+        path = self._marker_path(query, index, mode)
         if not path.exists():
             return None
 
@@ -114,8 +126,17 @@ class MarkerStore:
             # Corrupted marker file, treat as missing
             return None
 
-    def save(self, query: str, index: str, last_timestamp: str, last_uuid: str) -> Marker:
+    def save(
+        self, query: str, index: str, last_timestamp: str, last_uuid: str, mode: str | None = None
+    ) -> Marker:
         """Save or update a marker.
+
+        Args:
+            query: The search query string
+            index: The index being queried
+            last_timestamp: Timestamp of the last record
+            last_uuid: UUID of the last record
+            mode: Output mode ("file" or "prefix") - different modes have separate markers
 
         The marker file is created with secure permissions (0o600 on Unix)
         to protect query patterns from other users on the system.
@@ -130,14 +151,14 @@ class MarkerStore:
             updated_at=datetime.now().isoformat(),
         )
 
-        path = self._marker_path(query, index)
+        path = self._marker_path(query, index, mode)
         path.write_text(json.dumps(marker.to_dict(), indent=2))
         _set_secure_permissions(path)
         return marker
 
-    def delete(self, query: str, index: str) -> bool:
+    def delete(self, query: str, index: str, mode: str | None = None) -> bool:
         """Delete a marker. Returns True if it existed."""
-        path = self._marker_path(query, index)
+        path = self._marker_path(query, index, mode)
         if path.exists():
             path.unlink()
             return True

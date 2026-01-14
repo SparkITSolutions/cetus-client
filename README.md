@@ -51,6 +51,91 @@ cetus query "A:192.168.1.1" --format table
 cetus alerts list
 ```
 
+## Operating Modes
+
+Cetus has two primary operating modes designed for different use cases:
+
+### Direct Mode (stdout)
+
+**For:** Interactive exploration, piping to other tools, one-off queries
+
+Direct mode outputs results to stdout with no state tracking. Each query is independent - you get exactly what you ask for, nothing more.
+
+```bash
+# Interactive exploration
+cetus query "host:*.example.com" --format table
+
+# Pipe to jq for processing
+cetus query "host:*.example.com" | jq '.[].host'
+
+# Chain with other tools
+cetus query "A:192.168.1.*" | jq -r '.[].host' | sort -u
+```
+
+**Characteristics:**
+- Results go to stdout (terminal or pipe)
+- No markers - queries are stateless
+- Full query results returned every time
+- Default format: `json`
+
+### Collector Mode (file output)
+
+**For:** Data collection, scheduled exports, building datasets over time
+
+Collector mode writes to files and tracks your position using markers. Subsequent runs fetch only new records since the last query, making it efficient for ongoing data collection.
+
+```bash
+# First run: fetches last 7 days, creates file
+cetus query "host:*.example.com" -o results.jsonl
+# Output: Wrote 1,523 records to results.jsonl
+
+# Later runs: fetches only NEW records, appends to file
+cetus query "host:*.example.com" -o results.jsonl
+# Output: Resuming from: 2025-01-14T10:30:00
+#         Appended 47 records to results.jsonl
+
+# No new data? File unchanged
+cetus query "host:*.example.com" -o results.jsonl
+# Output: Resuming from: 2025-01-14T15:42:18
+#         No new records (file unchanged)
+```
+
+**Characteristics:**
+- Results written to file (`-o` or `-p`)
+- Markers track last-seen record per query
+- Incremental updates - only fetches new data
+- Appends to existing files (or creates timestamped files with `-p`)
+- Default format: `json` (recommended: `jsonl`)
+
+**Two file output options:**
+
+| Option | Behavior | Use Case |
+|--------|----------|----------|
+| `-o FILE` | Appends to same file | Cumulative dataset |
+| `-p PREFIX` | Creates timestamped files | Export pipelines, archival |
+
+**Important:** `-o` and `-p` maintain separate markers. You can use both modes
+for the same query without data gaps - each tracks its own position independently.
+
+```bash
+# -o: Single cumulative file
+cetus query "host:*.example.com" -o dns_data.jsonl
+# Always writes to: dns_data.jsonl
+
+# -p: Timestamped files per run
+cetus query "host:*.example.com" -p exports/dns
+# Creates: exports/dns_2025-01-14_10-30-00.jsonl
+# Next run: exports/dns_2025-01-14_14-45-00.jsonl
+```
+
+**Switching modes:** Use `--no-marker` to run a collector-mode query without markers (full re-query, overwrites file):
+
+```bash
+cetus query "host:*.example.com" --no-marker --since-days 30 -o full_export.jsonl
+```
+
+---
+
 ## Commands
 
 ### query
@@ -68,85 +153,70 @@ cetus query SEARCH [OPTIONS]
 | `-i, --index` | Index: `dns`, `certstream`, `alerting` (default: dns) |
 | `-m, --media` | Storage tier: `nvme` (fast), `all` (complete) |
 | `-f, --format` | Output: `json`, `jsonl`, `csv`, `table` |
-| `-o, --output FILE` | Write to file instead of stdout |
-| `-d, --since-days N` | Look back N days (default: 7) |
-| `--stream` | Stream results as they arrive |
-| `--no-marker` | Disable incremental query tracking |
+| `-o, --output FILE` | Collector mode: write to file (enables markers) |
+| `-p, --output-prefix PREFIX` | Collector mode: timestamped files (e.g., `prefix_2025-01-14_10-30-00.jsonl`) |
+| `-d, --since-days N` | Look back N days (default: 7, ignored if marker exists) |
+| `--stream` | Stream results as they arrive (large queries) |
+| `--no-marker` | Disable incremental tracking (full re-query) |
 
 **Examples:**
 
 ```bash
-# Basic query
-cetus query "host:*.example.com"
+# Direct mode - interactive queries
+cetus query "host:*.example.com"                    # JSON to stdout
+cetus query "host:*.example.com" --format table     # Human-readable
+cetus query "host:*.example.com" | jq '.[].host'    # Pipe to tools
 
-# Pipe to jq for processing
-cetus query "host:*.example.com" | jq '.[].host'
+# Collector mode - data collection
+cetus query "host:*.example.com" -o results.jsonl   # Incremental collection
+cetus query "host:*.example.com" -p exports/dns     # Timestamped exports
 
-# Table format for human reading
-cetus query "A:10.0.0.1" --format table
-
-# Save to file
-cetus query "host:*.example.com" -o results.json
-
-# Stream large results (uses jsonl format)
+# Stream large results
 cetus query "host:*" --stream -o all_records.jsonl
 
-# Query certificate transparency logs
+# Query other indices
 cetus query "leaf_cert.subject.CN:*.example.com" --index certstream
+cetus query "alert_type:dns_match" --index alerting
 
-# Look back 30 days
-cetus query "host:example.com" --since-days 30
+# Full re-query (ignore markers)
+cetus query "host:*.example.com" --no-marker --since-days 30 -o full.jsonl
 ```
 
-### Output Modes
+### Collector Mode Details
 
-The client has two output modes with different behaviors:
-
-**Stdout Mode (default)** - Results go to terminal
-```bash
-cetus query "host:*.example.com"              # JSON to stdout
-cetus query "host:*.example.com" | jq '.'     # Pipe to other tools
-```
-
-**File Mode** - Results written to file with incremental query support
-```bash
-cetus query "host:*.example.com" -o results.jsonl
-```
-
-### Incremental Queries (File Mode Only)
-
-When writing to a file (`-o`), the client tracks your queries using markers. This enables incremental updates where subsequent runs fetch only new records and **append** them to the existing file.
-
-```bash
-# First run: fetches last 7 days, creates file
-cetus query "host:*.example.com" -o results.jsonl
-
-# Later runs: fetches only new records, appends to file
-cetus query "host:*.example.com" -o results.jsonl
-
-# Skip markers for a full re-query (overwrites file)
-cetus query "host:*.example.com" --no-marker --since-days 30 -o results.jsonl
-```
-
-**Recommended format for incremental queries:** `jsonl` (JSON Lines)
-- Appends new records as additional lines
-- Easy to process with tools like `jq`, `grep`, `wc -l`
-- Efficient for large accumulated datasets
-
-Other formats also support incremental mode:
-- `csv`: Appends rows without repeating header
-- `json`: Merges new records into existing array (requires reading entire file)
-- `table`: Not recommended for file accumulation
-
-**Zero new records:** When an incremental query finds no new data, the file is left unchanged.
-
-Manage markers:
+**Markers** track your position so subsequent queries fetch only new records:
 
 ```bash
 cetus markers list              # Show all markers
 cetus markers clear             # Clear all markers
 cetus markers clear --index dns # Clear only DNS markers
 ```
+
+**Console feedback** shows what's happening:
+
+```
+# Starting incremental query with existing marker:
+Resuming from: 2025-01-14T10:30:00
+Fetched 1,523 records (page 2)...
+Appended 47 records to results.jsonl in 2.34s
+
+# No new records (file exists):
+Resuming from: 2025-01-14T15:42:18
+No new records (file unchanged) in 0.45s
+
+# No new records (first run, no data in time range):
+No new records since last query (no file written) in 0.38s
+```
+
+**Recommended format:** `jsonl` (JSON Lines)
+- Efficient append operations
+- Easy to process: `wc -l`, `grep`, `jq -s`
+- No rewriting of existing data
+
+Other formats:
+- `csv`: Appends rows without repeating header
+- `json`: Merges into existing array (requires rewriting file)
+- `table`: Not recommended for file output
 
 ### alerts list
 

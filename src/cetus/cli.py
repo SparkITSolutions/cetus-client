@@ -9,6 +9,7 @@ import json
 import logging
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -24,6 +25,23 @@ from .formatters import get_formatter
 from .markers import MarkerStore
 
 console = Console(stderr=True)
+
+
+def _generate_timestamped_filename(prefix: str, output_format: str) -> Path:
+    """Generate a filename with current timestamp.
+
+    Args:
+        prefix: File path prefix (can include directory)
+        output_format: Format extension (json, jsonl, csv, table)
+
+    Returns:
+        Path with timestamp and appropriate extension
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    # Map format to extension
+    ext_map = {"json": "json", "jsonl": "jsonl", "csv": "csv", "table": "txt"}
+    ext = ext_map.get(output_format, output_format)
+    return Path(f"{prefix}_{timestamp}.{ext}")
 
 
 def _file_has_content(path: Path) -> bool:
@@ -132,11 +150,12 @@ def _write_or_append(
         is_incremental: True if using markers (incremental query mode)
 
     Returns:
-        Number of records written
+        Number of records written, or -1 if no file was written (incremental, no data)
     """
-    # If no data in incremental mode, don't touch the file
-    if not data and is_incremental and _file_has_content(output_file):
-        return 0
+    # If no data in incremental mode, don't touch the file at all
+    # (neither create nor modify)
+    if not data and is_incremental:
+        return -1
 
     # If incremental and file exists, append
     if is_incremental and _file_has_content(output_file):
@@ -169,6 +188,7 @@ def execute_query_and_output(
     no_marker: bool,
     api_key: str | None,
     host: str | None,
+    output_prefix: str | None = None,
 ) -> None:
     """Common query execution logic used by both 'query' and 'alerts backtest' commands.
 
@@ -185,6 +205,7 @@ def execute_query_and_output(
         no_marker: If True, don't use or save markers
         api_key: Optional API key override
         host: Optional host override
+        output_prefix: Optional prefix for timestamped output files
     """
     from .client import QueryResult
 
@@ -192,9 +213,27 @@ def execute_query_and_output(
     if since_days is None:
         since_days = config.since_days
 
+    # Handle output_prefix: generate timestamped filename
+    # output_prefix mode creates new files each run, still uses markers
+    use_prefix_mode = output_prefix is not None
+    if use_prefix_mode:
+        output_file = _generate_timestamped_filename(output_prefix, output_format)
+
     marker_store = MarkerStore()
-    # Only use markers in file mode, not stdout mode
-    marker = None if (no_marker or not output_file) else marker_store.get(search, index)
+    # Use markers in file mode (both -o and --output-prefix), not stdout mode
+    # Different modes have separate markers to prevent data gaps
+    marker_mode = "prefix" if use_prefix_mode else "file" if output_file else None
+    marker = None
+    if not no_marker and output_file:
+        marker = marker_store.get(search, index, marker_mode)
+
+    # Show marker/file info before query starts
+    if use_prefix_mode:
+        console.print(f"[dim]Output file: {output_file}[/dim]")
+    if marker:
+        # Show marker info so user knows we're resuming
+        ts_display = marker.last_timestamp[:19]
+        console.print(f"[dim]Resuming from: {ts_display}[/dim]")
 
     formatter = get_formatter(output_format)
 
@@ -248,19 +287,47 @@ def execute_query_and_output(
     # Output results
     is_incremental = marker is not None
     if output_file:
-        file_existed = _file_has_content(output_file)
-        records_written = _write_or_append(result.data, output_file, output_format, is_incremental)
-        if records_written == 0 and is_incremental:
-            console.print(f"[dim]No new records (file unchanged) in {elapsed:.2f}s[/dim]")
-        elif is_incremental and file_existed:
-            console.print(
-                f"[green]Appended {records_written} records to {output_file} "
-                f"in {elapsed:.2f}s[/green]"
-            )
+        # In prefix mode, we always create new files (never append)
+        # but still use markers to only fetch new records
+        if use_prefix_mode:
+            if not result.data:
+                # No new records - don't create empty file
+                console.print(f"[dim]No new records (no file created) in {elapsed:.2f}s[/dim]")
+            else:
+                # Write to new timestamped file
+                formatter = get_formatter(output_format)
+                newline = "" if output_format == "csv" else None
+                with open(output_file, "w", encoding="utf-8", newline=newline) as f:
+                    formatter.format_stream(result.data, f)
+                console.print(
+                    f"[green]Wrote {len(result.data)} records to {output_file} "
+                    f"in {elapsed:.2f}s[/green]"
+                )
         else:
-            console.print(
-                f"[green]Wrote {records_written} records to {output_file} in {elapsed:.2f}s[/green]"
+            # Standard -o mode with append support
+            file_existed = _file_has_content(output_file)
+            records_written = _write_or_append(
+                result.data, output_file, output_format, is_incremental
             )
+            if records_written == -1:
+                # Incremental mode with no new data - no file written/changed
+                if file_existed:
+                    console.print(f"[dim]No new records (file unchanged) in {elapsed:.2f}s[/dim]")
+                else:
+                    console.print(
+                        f"[dim]No new records since last query (no file written) "
+                        f"in {elapsed:.2f}s[/dim]"
+                    )
+            elif is_incremental and file_existed:
+                console.print(
+                    f"[green]Appended {records_written} records to {output_file} "
+                    f"in {elapsed:.2f}s[/green]"
+                )
+            else:
+                console.print(
+                    f"[green]Wrote {records_written} records to {output_file} "
+                    f"in {elapsed:.2f}s[/green]"
+                )
     else:
         # Write to stdout - use stream for proper encoding handling
         # For table format, use Rich console directly to handle Unicode
@@ -279,7 +346,7 @@ def execute_query_and_output(
 
     # Save marker for next incremental query (only in file mode, not stdout)
     if output_file and not no_marker and result.last_uuid and result.last_timestamp:
-        marker_store.save(search, index, result.last_timestamp, result.last_uuid)
+        marker_store.save(search, index, result.last_timestamp, result.last_uuid, marker_mode)
         if ctx.obj.get("verbose"):
             console.print("[dim]Saved marker for next incremental query[/dim]")
 
@@ -295,6 +362,7 @@ def execute_streaming_query(
     no_marker: bool,
     api_key: str | None,
     host: str | None,
+    output_prefix: str | None = None,
 ) -> None:
     """Execute a streaming query, outputting results as they arrive.
 
@@ -312,6 +380,7 @@ def execute_streaming_query(
         no_marker: If True, don't use or save markers
         api_key: Optional API key override
         host: Optional host override
+        output_prefix: Optional prefix for timestamped output files
     """
     config = Config.load(api_key=api_key, host=host)
     if since_days is None:
@@ -321,19 +390,38 @@ def execute_streaming_query(
     if output_format is None:
         output_format = "jsonl"
 
+    # Handle output_prefix: generate timestamped filename
+    use_prefix_mode = output_prefix is not None
+    if use_prefix_mode:
+        output_file = _generate_timestamped_filename(output_prefix, output_format)
+
     marker_store = MarkerStore()
-    # Only use markers in file mode, not stdout mode
-    marker = None if (no_marker or not output_file) else marker_store.get(search, index)
+    # Use markers in file mode (both -o and --output-prefix), not stdout mode
+    # Different modes have separate markers to prevent data gaps
+    marker_mode = "prefix" if use_prefix_mode else "file" if output_file else None
+    marker = None
+    if not no_marker and output_file:
+        marker = marker_store.get(search, index, marker_mode)
     is_incremental = marker is not None
+
+    # Show marker/file info before query starts
+    if use_prefix_mode:
+        console.print(f"[dim]Output file: {output_file}[/dim]")
+    if marker:
+        # Show marker info so user knows we're resuming
+        ts_display = marker.last_timestamp[:19]
+        console.print(f"[dim]Resuming from: {ts_display}[/dim]")
 
     timestamp_field = f"{index}_timestamp"
 
     # Check if file exists before we start (for append detection)
-    file_existed = output_file and _file_has_content(output_file)
+    # In prefix mode, file_existed is always False since we just generated a new filename
+    file_existed = (not use_prefix_mode) and output_file and _file_has_content(output_file)
 
     # Determine if we can truly stream or need to buffer
     # json and table formats require buffering; jsonl and csv can truly stream
-    needs_buffering = output_format in ("json", "table")
+    # In prefix mode, we also buffer to avoid creating empty files when there's no data
+    needs_buffering = output_format in ("json", "table") or use_prefix_mode
 
     # Table format requires buffering for column width calculation
     if output_format == "table":
@@ -459,9 +547,16 @@ def execute_streaming_query(
         sys.exit(130)
     elapsed = time.perf_counter() - start_time
 
-    # Handle buffered data (for json/table or incremental append that needed merge)
+    # Handle buffered data (for json/table formats)
     if buffered_data and output_file:
-        _write_or_append(buffered_data, output_file, output_format, is_incremental)
+        if use_prefix_mode:
+            # In prefix mode, always create new file (never append)
+            formatter = get_formatter(output_format)
+            newline = "" if output_format == "csv" else None
+            with open(output_file, "w", encoding="utf-8", newline=newline) as f:
+                formatter.format_stream(buffered_data, f)
+        else:
+            _write_or_append(buffered_data, output_file, output_format, is_incremental)
     elif buffered_data and not output_file:
         # Stdout with buffered format
         formatter = get_formatter(output_format)
@@ -474,9 +569,34 @@ def execute_streaming_query(
             stdout.flush()
             stdout.detach()
 
+    # Clean up empty files created in incremental mode with no results
+    # (streaming formats open the file before knowing if there will be data)
+    created_empty_file = (
+        count == 0
+        and is_incremental
+        and not file_existed
+        and output_file
+        and output_file.exists()
+        and output_file.stat().st_size == 0
+    )
+    if created_empty_file:
+        output_file.unlink()
+
     # Report results
     if output_file:
-        if count == 0 and is_incremental and file_existed:
+        if use_prefix_mode:
+            if count == 0:
+                console.print(f"[dim]No new records (no file created) in {elapsed:.2f}s[/dim]")
+            else:
+                console.print(
+                    f"[green]Streamed {count} records to {output_file} in {elapsed:.2f}s[/green]"
+                )
+        elif count == 0 and is_incremental and not file_existed:
+            # First incremental run with no results - no file written
+            console.print(
+                f"[dim]No new records since last query (no file written) in {elapsed:.2f}s[/dim]"
+            )
+        elif count == 0 and is_incremental and file_existed:
             console.print(f"[dim]No new records (file unchanged) in {elapsed:.2f}s[/dim]")
         elif is_incremental and file_existed:
             console.print(
@@ -494,7 +614,7 @@ def execute_streaming_query(
 
     # Save marker for next incremental query (only in file mode, not stdout)
     if output_file and not no_marker and last_uuid and last_timestamp:
-        marker_store.save(search, index, last_timestamp, last_uuid)
+        marker_store.save(search, index, last_timestamp, last_uuid, marker_mode)
         if ctx.obj.get("verbose"):
             console.print("[dim]Saved marker for next incremental query[/dim]")
 
@@ -566,7 +686,14 @@ def main(ctx: click.Context, verbose: bool, version: bool) -> None:
     "-o",
     "output_file",
     type=click.Path(dir_okay=False, writable=True, path_type=Path),
-    help="Write output to file instead of stdout",
+    help="Collector mode: write to file (enables incremental markers)",
+)
+@click.option(
+    "--output-prefix",
+    "-p",
+    "output_prefix",
+    type=str,
+    help="Collector mode: timestamped files (e.g., -p results -> results_<timestamp>.jsonl)",
 )
 @click.option(
     "--since-days",
@@ -603,6 +730,7 @@ def query(
     media: str,
     output_format: str | None,
     output_file: Path | None,
+    output_prefix: str | None,
     since_days: int | None,
     no_marker: bool,
     stream: bool,
@@ -618,16 +746,22 @@ def query(
         A:192.168.1.1               # DNS A record lookup
         host:example.com AND A:*    # Combined conditions
 
-    By default, results are written to stdout as JSON. Use --output to
-    write to a file, or --format to change the output format.
+    \b
+    OPERATING MODES:
+      Direct mode (default): Results to stdout, no state tracking.
+      Collector mode (-o/-p): Results to file with incremental markers.
 
-    Incremental queries are supported via markers. On first run, data
-    from the last 7 days is fetched. Subsequent runs fetch only new
-    data since the last query. Use --no-marker to disable this behavior.
+    In collector mode, markers track your position so subsequent runs
+    fetch only new records. First run fetches the last 7 days (or
+    --since-days). Use --no-marker for a full re-query.
 
-    Use --stream for large queries to see results as they arrive rather
-    than waiting for all data to be fetched. Streaming defaults to jsonl format.
+    Use --stream for large queries to see results as they arrive.
     """
+    # Validate mutually exclusive options
+    if output_file and output_prefix:
+        console.print("[red]Error:[/red] --output and --output-prefix are mutually exclusive")
+        sys.exit(1)
+
     try:
         if stream:
             # --stream implies jsonl unless format explicitly specified
@@ -642,6 +776,7 @@ def query(
                 no_marker=no_marker,
                 api_key=api_key,
                 host=host,
+                output_prefix=output_prefix,
             )
         else:
             # Default to json for non-streaming
@@ -656,6 +791,7 @@ def query(
                 no_marker=no_marker,
                 api_key=api_key,
                 host=host,
+                output_prefix=output_prefix,
             )
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
