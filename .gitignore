@@ -42,3 +42,6 @@ htmlcov/
 # Old marker files (now stored in XDG data dir)
 *_marker
 *_results_*.out
+
+# Claude Code temp files
+tmpclaude-*
