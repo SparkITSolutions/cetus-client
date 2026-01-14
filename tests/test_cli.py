@@ -494,3 +494,299 @@ class TestCLIIntegration:
             # Empty again
             result = runner.invoke(main, ["markers", "list"])
             assert "No markers" in result.output
+
+
+class TestIncrementalQueryAppend:
+    """Tests for incremental query file append behavior."""
+
+    @pytest.fixture
+    def mock_query_result_batch1(self) -> QueryResult:
+        """First batch of query results."""
+        return QueryResult(
+            data=[
+                {"uuid": "1", "host": "a.example.com", "A": "1.1.1.1", "dns_timestamp": "2025-01-01T00:00:00Z"},
+                {"uuid": "2", "host": "b.example.com", "A": "2.2.2.2", "dns_timestamp": "2025-01-01T01:00:00Z"},
+            ],
+            total_fetched=2,
+            last_uuid="2",
+            last_timestamp="2025-01-01T01:00:00Z",
+            pages_fetched=1,
+        )
+
+    @pytest.fixture
+    def mock_query_result_batch2(self) -> QueryResult:
+        """Second batch of query results (new records)."""
+        return QueryResult(
+            data=[
+                {"uuid": "3", "host": "c.example.com", "A": "3.3.3.3", "dns_timestamp": "2025-01-02T00:00:00Z"},
+            ],
+            total_fetched=1,
+            last_uuid="3",
+            last_timestamp="2025-01-02T00:00:00Z",
+            pages_fetched=1,
+        )
+
+    @pytest.fixture
+    def mock_query_result_empty(self) -> QueryResult:
+        """Empty result (no new records)."""
+        return QueryResult(
+            data=[],
+            total_fetched=0,
+            last_uuid=None,
+            last_timestamp=None,
+            pages_fetched=1,
+        )
+
+    def test_incremental_jsonl_preserves_file_on_zero_results(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result_batch1: QueryResult,
+        mock_query_result_empty: QueryResult,
+    ):
+        """When incremental query returns 0 records, existing file should be unchanged."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        output_file = tmp_path / "results.jsonl"
+
+        async def mock_query_async_batch1(*args, **kwargs):
+            return mock_query_result_batch1
+
+        async def mock_query_async_empty(*args, **kwargs):
+            return mock_query_result_empty
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+        ):
+            # First run - write initial data
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+
+            # Verify file has initial data
+            initial_content = output_file.read_text()
+            assert '"uuid": "1"' in initial_content
+            assert '"uuid": "2"' in initial_content
+            lines_before = len(initial_content.strip().split("\n"))
+            assert lines_before == 2
+
+            # Second run with 0 results - file should be unchanged
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_empty):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+                assert "No new records" in result.output or "unchanged" in result.output
+
+            # Verify file is unchanged
+            final_content = output_file.read_text()
+            assert final_content == initial_content
+
+    def test_incremental_jsonl_appends_new_records(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result_batch1: QueryResult,
+        mock_query_result_batch2: QueryResult,
+    ):
+        """When incremental query returns new records, they should be appended."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        output_file = tmp_path / "results.jsonl"
+
+        async def mock_query_async_batch1(*args, **kwargs):
+            return mock_query_result_batch1
+
+        async def mock_query_async_batch2(*args, **kwargs):
+            return mock_query_result_batch2
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+        ):
+            # First run
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+
+            # Second run with new data
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+                assert "Appended" in result.output
+
+            # Verify all 3 records are in file
+            final_content = output_file.read_text()
+            assert '"uuid": "1"' in final_content
+            assert '"uuid": "2"' in final_content
+            assert '"uuid": "3"' in final_content
+            lines = final_content.strip().split("\n")
+            assert len(lines) == 3
+
+    def test_incremental_csv_appends_without_repeating_header(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result_batch1: QueryResult,
+        mock_query_result_batch2: QueryResult,
+    ):
+        """CSV append should not repeat the header row."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        output_file = tmp_path / "results.csv"
+
+        async def mock_query_async_batch1(*args, **kwargs):
+            return mock_query_result_batch1
+
+        async def mock_query_async_batch2(*args, **kwargs):
+            return mock_query_result_batch2
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+        ):
+            # First run
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "csv",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+
+            # Second run
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "csv",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+
+            # Verify only one header row
+            final_content = output_file.read_text()
+            lines = final_content.strip().split("\n")
+            # 1 header + 3 data rows
+            assert len(lines) == 4
+            # First line should be header
+            assert lines[0].startswith("uuid,")
+            # Verify all 3 uuids are present in data rows
+            assert "1,a.example.com" in final_content
+            assert "2,b.example.com" in final_content
+            assert "3,c.example.com" in final_content
+
+    def test_incremental_json_merges_arrays(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result_batch1: QueryResult,
+        mock_query_result_batch2: QueryResult,
+    ):
+        """JSON format should merge new records into existing array."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        output_file = tmp_path / "results.json"
+
+        async def mock_query_async_batch1(*args, **kwargs):
+            return mock_query_result_batch1
+
+        async def mock_query_async_batch2(*args, **kwargs):
+            return mock_query_result_batch2
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+        ):
+            # First run
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "json",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+
+            # Verify initial state
+            initial_data = json.loads(output_file.read_text())
+            assert len(initial_data) == 2
+
+            # Second run
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "json",
+                    "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+
+            # Verify merged array
+            final_data = json.loads(output_file.read_text())
+            assert len(final_data) == 3
+            uuids = [r["uuid"] for r in final_data]
+            assert "1" in uuids
+            assert "2" in uuids
+            assert "3" in uuids
+
+    def test_no_marker_flag_overwrites_file(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result_batch1: QueryResult,
+        mock_query_result_batch2: QueryResult,
+    ):
+        """With --no-marker, file should be overwritten not appended."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        output_file = tmp_path / "results.jsonl"
+
+        async def mock_query_async_batch1(*args, **kwargs):
+            return mock_query_result_batch1
+
+        async def mock_query_async_batch2(*args, **kwargs):
+            return mock_query_result_batch2
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+        ):
+            # First run
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
+                    "--no-marker", "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+
+            # Second run with --no-marker should overwrite
+            with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
+                result = runner.invoke(main, [
+                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
+                    "--no-marker", "--api-key", "test-key"
+                ])
+                assert result.exit_code == 0
+                assert "Wrote" in result.output  # Not "Appended"
+
+            # Should only have batch2 data
+            final_content = output_file.read_text()
+            assert '"uuid": "1"' not in final_content
+            assert '"uuid": "2"' not in final_content
+            assert '"uuid": "3"' in final_content
+            lines = final_content.strip().split("\n")
+            assert len(lines) == 1

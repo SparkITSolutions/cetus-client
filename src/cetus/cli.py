@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import io
+import json
 import logging
 import sys
 import time
@@ -22,6 +24,139 @@ from .formatters import get_formatter
 from .markers import MarkerStore
 
 console = Console(stderr=True)
+
+
+def _file_has_content(path: Path) -> bool:
+    """Check if file exists and has content."""
+    return path.exists() and path.stat().st_size > 0
+
+
+def _append_jsonl(data: list[dict], output_file: Path) -> int:
+    """Append records to a JSONL file."""
+    with open(output_file, "a", encoding="utf-8") as f:
+        for item in data:
+            f.write(json.dumps(item))
+            f.write("\n")
+    return len(data)
+
+
+def _append_csv(data: list[dict], output_file: Path) -> int:
+    """Append records to a CSV file (without repeating header)."""
+    if not data:
+        return 0
+
+    # Get fieldnames from existing file or from data
+    if _file_has_content(output_file):
+        # Read existing header
+        with open(output_file, "r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            fieldnames = next(reader, None)
+        if not fieldnames:
+            fieldnames = list(data[0].keys())
+        # Append without header
+        with open(output_file, "a", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            for row in data:
+                writer.writerow(row)
+    else:
+        # New file, write with header
+        fieldnames = list(data[0].keys())
+        with open(output_file, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            for row in data:
+                writer.writerow(row)
+    return len(data)
+
+
+def _append_json(data: list[dict], output_file: Path) -> int:
+    """Append records to a JSON array file by rewriting the footer."""
+    if not data:
+        return 0
+
+    if _file_has_content(output_file):
+        # Read existing data, extend, rewrite
+        with open(output_file, "r", encoding="utf-8") as f:
+            try:
+                existing = json.load(f)
+                if not isinstance(existing, list):
+                    existing = [existing]
+            except json.JSONDecodeError:
+                existing = []
+        existing.extend(data)
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2)
+            f.write("\n")
+    else:
+        # New file
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+    return len(data)
+
+
+def _append_table(data: list[dict], output_file: Path) -> int:
+    """Append records to a table file (rewrites entire file)."""
+    if not data and not _file_has_content(output_file):
+        return 0
+
+    # Table format requires full rewrite - read existing, merge, rewrite
+    # Note: Table format is not ideal for file accumulation
+    existing = []
+    if _file_has_content(output_file):
+        # For table format, we can't easily parse Rich tables back
+        # Just warn and overwrite with new data only
+        console.print(
+            "[yellow]Warning: table format cannot append to existing file. "
+            "Use jsonl or csv for incremental queries.[/yellow]"
+        )
+
+    # Write new data (or empty table)
+    formatter = get_formatter("table")
+    with open(output_file, "w", encoding="utf-8") as f:
+        formatter.format_stream(data, f)
+    return len(data)
+
+
+def _write_or_append(
+    data: list[dict],
+    output_file: Path,
+    output_format: str,
+    is_incremental: bool,
+) -> int:
+    """Write data to file, appending if incremental mode and file exists.
+
+    Args:
+        data: Records to write
+        output_file: Target file path
+        output_format: Format (json, jsonl, csv, table)
+        is_incremental: True if using markers (incremental query mode)
+
+    Returns:
+        Number of records written
+    """
+    # If no data in incremental mode, don't touch the file
+    if not data and is_incremental and _file_has_content(output_file):
+        return 0
+
+    # If incremental and file exists, append
+    if is_incremental and _file_has_content(output_file):
+        if output_format == "jsonl":
+            return _append_jsonl(data, output_file)
+        elif output_format == "csv":
+            return _append_csv(data, output_file)
+        elif output_format == "json":
+            return _append_json(data, output_file)
+        elif output_format == "table":
+            return _append_table(data, output_file)
+
+    # Fresh query or new file - overwrite
+    formatter = get_formatter(output_format)
+    # Use newline="" for CSV to let csv module handle line endings
+    newline = "" if output_format == "csv" else None
+    with open(output_file, "w", encoding="utf-8", newline=newline) as f:
+        formatter.format_stream(data, f)
+    return len(data)
 
 
 def execute_query_and_output(
@@ -112,13 +247,26 @@ def execute_query_and_output(
     elapsed = time.perf_counter() - start_time
 
     # Output results
+    is_incremental = marker is not None
     if output_file:
-        with open(output_file, "w", encoding="utf-8") as f:
-            formatter.format_stream(result.data, f)
-        console.print(
-            f"[green]Wrote {result.total_fetched} records to {output_file} "
-            f"in {elapsed:.2f}s[/green]"
+        file_existed = _file_has_content(output_file)
+        records_written = _write_or_append(
+            result.data, output_file, output_format, is_incremental
         )
+        if records_written == 0 and is_incremental:
+            console.print(
+                f"[dim]No new records (file unchanged) in {elapsed:.2f}s[/dim]"
+            )
+        elif is_incremental and file_existed:
+            console.print(
+                f"[green]Appended {records_written} records to {output_file} "
+                f"in {elapsed:.2f}s[/green]"
+            )
+        else:
+            console.print(
+                f"[green]Wrote {records_written} records to {output_file} "
+                f"in {elapsed:.2f}s[/green]"
+            )
     else:
         # Write to stdout - use stream for proper encoding handling
         # For table format, use Rich console directly to handle Unicode
@@ -171,9 +319,6 @@ def execute_streaming_query(
         api_key: Optional API key override
         host: Optional host override
     """
-    import csv
-    import json
-
     config = Config.load(api_key=api_key, host=host)
     if since_days is None:
         since_days = config.since_days
@@ -185,8 +330,16 @@ def execute_streaming_query(
     marker_store = MarkerStore()
     # Only use markers in file mode, not stdout mode
     marker = None if (no_marker or not output_file) else marker_store.get(search, index)
+    is_incremental = marker is not None
 
     timestamp_field = f"{index}_timestamp"
+
+    # Check if file exists before we start (for append detection)
+    file_existed = output_file and _file_has_content(output_file)
+
+    # Determine if we can truly stream or need to buffer
+    # json and table formats require buffering; jsonl and csv can truly stream
+    needs_buffering = output_format in ("json", "table")
 
     # Table format requires buffering for column width calculation
     if output_format == "table":
@@ -195,27 +348,47 @@ def execute_streaming_query(
             "Use --format csv or jsonl for true streaming.[/yellow]"
         )
 
-    async def stream_results() -> tuple[int, str | None, str | None, bool]:
-        """Async inner function for streaming with responsive interrupt handling."""
+    async def stream_results() -> tuple[int, str | None, str | None, bool, list[dict]]:
+        """Async inner function for streaming with responsive interrupt handling.
+
+        Returns: (count, last_uuid, last_timestamp, interrupted, buffered_data)
+        buffered_data is only populated for json/table formats or when we need to merge.
+        """
         count = 0
         last_uuid = None
         last_timestamp = None
         interrupted = False
+        buffered_data: list[dict] = []
 
         client = CetusClient.from_config(config)
 
-        # Set up output destination
-        if output_file:
-            out_file = open(output_file, "w", encoding="utf-8", newline="")
-        else:
-            out_file = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="")
+        # For formats that need buffering (json, table), we buffer all data
+        # jsonl and csv can truly stream, even in append mode
+        buffer_all = needs_buffering
 
+        # Set up output destination for streaming formats
+        out_file = None
         csv_writer = None
-        table_buffer = []  # Only used for table format
+        csv_fieldnames = None
+
+        if not buffer_all:
+            if output_file:
+                # For incremental jsonl/csv with existing file, use append mode
+                if is_incremental and file_existed:
+                    if output_format == "csv":
+                        # Read existing header for CSV append
+                        with open(output_file, "r", encoding="utf-8", newline="") as f:
+                            reader = csv.reader(f)
+                            csv_fieldnames = next(reader, None)
+                    out_file = open(output_file, "a", encoding="utf-8", newline="")
+                else:
+                    out_file = open(output_file, "w", encoding="utf-8", newline="")
+            else:
+                out_file = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="")
 
         try:
-            if output_format == "json":
-                # JSON array format - stream but need wrapper
+            if not buffer_all and output_format == "json":
+                # JSON array format - stream but need wrapper (fresh file only)
                 out_file.write("[\n")
                 first = True
             else:
@@ -235,7 +408,9 @@ def execute_streaming_query(
                 last_uuid = record.get("uuid")
                 last_timestamp = record.get(timestamp_field)
 
-                if output_format == "jsonl":
+                if buffer_all:
+                    buffered_data.append(record)
+                elif output_format == "jsonl":
                     out_file.write(json.dumps(record) + "\n")
                     out_file.flush()
                 elif output_format == "json":
@@ -246,25 +421,23 @@ def execute_streaming_query(
                 elif output_format == "csv":
                     # Initialize CSV writer with headers from first record
                     if csv_writer is None:
-                        fieldnames = list(record.keys())
+                        if csv_fieldnames is None:
+                            csv_fieldnames = list(record.keys())
+                            # Write header only for new files
+                            if not (is_incremental and file_existed):
+                                temp_writer = csv.DictWriter(
+                                    out_file, fieldnames=csv_fieldnames, extrasaction="ignore"
+                                )
+                                temp_writer.writeheader()
+                                out_file.flush()
                         csv_writer = csv.DictWriter(
-                            out_file, fieldnames=fieldnames, extrasaction="ignore"
+                            out_file, fieldnames=csv_fieldnames, extrasaction="ignore"
                         )
-                        csv_writer.writeheader()
-                        out_file.flush()
                     csv_writer.writerow(record)
                     out_file.flush()
-                elif output_format == "table":
-                    # Buffer for table format
-                    table_buffer.append(record)
 
-            if output_format == "json":
+            if not buffer_all and output_format == "json":
                 out_file.write("\n]\n")
-
-            # Handle table format - output buffered data
-            if output_format == "table" and table_buffer:
-                formatter = get_formatter("table")
-                formatter.format_stream(table_buffer, out_file)
 
         except asyncio.CancelledError:
             interrupted = True
@@ -273,27 +446,52 @@ def execute_streaming_query(
             interrupted = True
             console.print("\n[yellow]Interrupted[/yellow]")
         finally:
-            if output_file:
-                out_file.close()
-            else:
-                out_file.flush()
-                out_file.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
+            if out_file is not None:
+                if output_file:
+                    out_file.close()
+                else:
+                    out_file.flush()
+                    out_file.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
             client.close()
 
-        return count, last_uuid, last_timestamp, interrupted
+        return count, last_uuid, last_timestamp, interrupted, buffered_data
 
     # Run the async streaming function
     start_time = time.perf_counter()
     try:
-        count, last_uuid, last_timestamp, interrupted = asyncio.run(stream_results())
+        count, last_uuid, last_timestamp, interrupted, buffered_data = asyncio.run(stream_results())
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted[/yellow]")
         sys.exit(130)
     elapsed = time.perf_counter() - start_time
 
+    # Handle buffered data (for json/table or incremental append that needed merge)
+    if buffered_data and output_file:
+        _write_or_append(buffered_data, output_file, output_format, is_incremental)
+    elif buffered_data and not output_file:
+        # Stdout with buffered format
+        formatter = get_formatter(output_format)
+        if output_format == "table":
+            stdout_console = Console(force_terminal=sys.stdout.isatty())
+            formatter.format_stream(buffered_data, stdout_console.file)
+        else:
+            stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+            formatter.format_stream(buffered_data, stdout)
+            stdout.flush()
+            stdout.detach()
+
     # Report results
     if output_file:
-        console.print(f"[green]Streamed {count} records to {output_file} in {elapsed:.2f}s[/green]")
+        if count == 0 and is_incremental and file_existed:
+            console.print(f"[dim]No new records (file unchanged) in {elapsed:.2f}s[/dim]")
+        elif is_incremental and file_existed:
+            console.print(
+                f"[green]Appended {count} records to {output_file} in {elapsed:.2f}s[/green]"
+            )
+        else:
+            console.print(
+                f"[green]Streamed {count} records to {output_file} in {elapsed:.2f}s[/green]"
+            )
     elif not interrupted:
         console.print(f"\n[dim]Streamed {count} records in {elapsed:.2f}s[/dim]", highlight=False)
 

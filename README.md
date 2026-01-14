@@ -98,20 +98,47 @@ cetus query "leaf_cert.subject.CN:*.example.com" --index certstream
 cetus query "host:example.com" --since-days 30
 ```
 
-### Incremental Queries
+### Output Modes
 
-The client tracks your queries using markers. First run fetches N days of data; subsequent runs fetch only new records.
+The client has two output modes with different behaviors:
+
+**Stdout Mode (default)** - Results go to terminal
+```bash
+cetus query "host:*.example.com"              # JSON to stdout
+cetus query "host:*.example.com" | jq '.'     # Pipe to other tools
+```
+
+**File Mode** - Results written to file with incremental query support
+```bash
+cetus query "host:*.example.com" -o results.jsonl
+```
+
+### Incremental Queries (File Mode Only)
+
+When writing to a file (`-o`), the client tracks your queries using markers. This enables incremental updates where subsequent runs fetch only new records and **append** them to the existing file.
 
 ```bash
-# First run: fetches last 7 days
+# First run: fetches last 7 days, creates file
 cetus query "host:*.example.com" -o results.jsonl
 
-# Later runs: fetches only new data
+# Later runs: fetches only new records, appends to file
 cetus query "host:*.example.com" -o results.jsonl
 
-# Skip markers for a full query
-cetus query "host:*.example.com" --no-marker --since-days 30
+# Skip markers for a full re-query (overwrites file)
+cetus query "host:*.example.com" --no-marker --since-days 30 -o results.jsonl
 ```
+
+**Recommended format for incremental queries:** `jsonl` (JSON Lines)
+- Appends new records as additional lines
+- Easy to process with tools like `jq`, `grep`, `wc -l`
+- Efficient for large accumulated datasets
+
+Other formats also support incremental mode:
+- `csv`: Appends rows without repeating header
+- `json`: Merges new records into existing array (requires reading entire file)
+- `table`: Not recommended for file accumulation
+
+**Zero new records:** When an incremental query finds no new data, the file is left unchanged.
 
 Manage markers:
 
