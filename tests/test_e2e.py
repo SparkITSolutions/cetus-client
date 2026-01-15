@@ -11,7 +11,7 @@ Environment variables:
 Run with:
     CETUS_E2E_TEST=1 CETUS_API_KEY=your-key pytest tests/test_e2e.py -v
 
-Expected duration: ~60-90 seconds for all 21 tests
+Expected duration: ~90-120 seconds for all 31 tests
 
 Query optimization:
 - Uses host:microsoft.com which has frequent data and returns quickly
@@ -683,3 +683,242 @@ class TestIncrementalQueries:
         files2 = list(tmp_path.glob("export_*.jsonl"))
         # Should have 1 or 2 files depending on whether new data arrived
         assert len(files2) >= 1
+
+
+class TestCLIVersion:
+    """Test CLI version and help commands."""
+
+    def test_version_flag(self) -> None:
+        """Test --version shows version string."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["--version"])
+        assert result.exit_code == 0
+        assert "cetus" in result.output.lower()
+        # Should contain a version number pattern
+        import re
+        assert re.search(r"\d+\.\d+\.\d+", result.output)
+
+
+class TestCLIMarkers:
+    """E2E tests for marker management commands."""
+
+    def test_markers_list_empty(self, tmp_path) -> None:
+        """Test markers list when no markers exist."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner(env={"CETUS_DATA_DIR": str(tmp_path)})
+        result = runner.invoke(main, ["markers", "list"])
+        assert result.exit_code == 0
+        assert "No markers" in result.output or "0" in result.output or result.output.strip() == ""
+
+    def test_markers_list_shows_markers(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test markers list shows saved markers after a query."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "results.jsonl"
+
+        runner = CliRunner(env={"CETUS_DATA_DIR": str(tmp_path)})
+
+        # Run a query to create a marker
+        runner.invoke(
+            main,
+            [
+                "query",
+                "host:microsoft.com",
+                "--index", "dns",
+                "--since-days", "1",
+                "--format", "jsonl",
+                "-o", str(output_file),
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+
+        # List markers
+        result = runner.invoke(main, ["markers", "list"])
+        assert result.exit_code == 0
+        # Should show the dns index marker
+        assert "dns" in result.output.lower()
+
+    def test_markers_clear(self, api_key: str, host: str, tmp_path) -> None:
+        """Test markers clear removes markers."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "results.jsonl"
+
+        runner = CliRunner(env={"CETUS_DATA_DIR": str(tmp_path)})
+
+        # Run a query to create a marker
+        runner.invoke(
+            main,
+            [
+                "query",
+                "host:microsoft.com",
+                "--index", "dns",
+                "--since-days", "1",
+                "--format", "jsonl",
+                "-o", str(output_file),
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+
+        # Clear markers
+        result = runner.invoke(main, ["markers", "clear", "-y"])
+        assert result.exit_code == 0
+        assert "Cleared" in result.output
+
+        # Verify cleared
+        list_result = runner.invoke(main, ["markers", "list"])
+        # Should be empty now
+        marker_files = list(tmp_path.glob("markers/*.json"))
+        assert len(marker_files) == 0
+
+
+class TestCLIConfig:
+    """E2E tests for config management commands."""
+
+    def test_config_path(self) -> None:
+        """Test config path shows file location."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["config", "path"])
+        assert result.exit_code == 0
+        assert "config" in result.output.lower()
+        # Should be a file path
+        assert "/" in result.output or "\\" in result.output
+
+
+class TestAlertResults:
+    """E2E tests for alert results command."""
+
+    def test_alert_results_not_found(self, api_key: str, host: str) -> None:
+        """Test alert results with non-existent alert ID returns error."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "alerts", "results", "999999",  # Non-existent ID
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        # Should fail with 404 or similar error
+        assert result.exit_code != 0 or "not found" in result.output.lower() or "error" in result.output.lower()
+
+
+class TestAlertBacktest:
+    """E2E tests for alert backtest command."""
+
+    def test_alert_backtest_not_found(self, api_key: str, host: str) -> None:
+        """Test alert backtest with non-existent alert ID returns error."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "alerts", "backtest", "999999",  # Non-existent ID
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        # Should fail with 404 or similar error
+        assert result.exit_code != 0 or "not found" in result.output.lower() or "error" in result.output.lower()
+
+
+class TestConnectionErrors:
+    """E2E tests for connection error handling."""
+
+    def test_invalid_host_error(self) -> None:
+        """Test that invalid host gives clear error message."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query", "host:test.com",
+                "--host", "nonexistent.invalid.host.example",
+                "--api-key", "test-key",
+            ],
+        )
+        assert result.exit_code != 0
+        # Should have a connection error message
+        assert "connect" in result.output.lower() or "error" in result.output.lower()
+
+
+class TestEmptyResults:
+    """E2E tests for queries that return no results.
+
+    Note: We use alerting index with a specific non-matching query because
+    DNS queries without matches still scan all shards and can timeout.
+    The alerting index is smaller and faster for empty result tests.
+    """
+
+    def test_query_no_results(self, api_key: str, host: str) -> None:
+        """Test query that returns empty results handles gracefully."""
+        from cetus.client import CetusClient
+
+        # Use alerting index which is smaller - query for non-existent UUID
+        client = CetusClient(api_key=api_key, host=host, timeout=60)
+        try:
+            result = client.query(
+                search="uuid:00000000-0000-0000-0000-000000000000",
+                index="alerting",
+                media="nvme",
+                since_days=1,
+                marker=None,
+            )
+            assert result is not None
+            assert isinstance(result.data, list)
+            # Should return empty or very few results
+            assert len(result.data) < 10
+        finally:
+            client.close()
+
+    def test_cli_query_no_results(self, api_key: str, host: str) -> None:
+        """Test CLI query with no results shows appropriate message."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                "uuid:00000000-0000-0000-0000-000000000000",
+                "--index", "alerting",
+                "--since-days", "1",
+                "--format", "json",
+                "--api-key", api_key,
+                "--host", host,
+            ],
+        )
+        assert result.exit_code == 0
+        # Should complete without error (may have [] or few results)
+        assert "[" in result.output  # Valid JSON array
