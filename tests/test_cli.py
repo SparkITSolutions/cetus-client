@@ -971,3 +971,48 @@ class TestOutputPrefix:
         ])
         assert result.exit_code == 1
         assert "mutually exclusive" in result.output
+
+
+class TestOutputDirectoryErrorHandling:
+    """Tests for error handling when output directory doesn't exist."""
+
+    def test_query_output_nonexistent_directory_shows_clean_error(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ):
+        """query -o to non-existent directory should show clean error, not traceback."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Use a path where the parent directory doesn't exist
+        nonexistent_dir = tmp_path / "nonexistent_subdir" / "results.json"
+
+        async def mock_query_async(*args, **kwargs):
+            return QueryResult(
+                data=[{"uuid": "1", "host": "test.com", "dns_timestamp": "2025-01-01T00:00:00Z"}],
+                total_fetched=1,
+                last_uuid="1",
+                last_timestamp="2025-01-01T00:00:00Z",
+                pages_fetched=1,
+            )
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(main, [
+                "query", "host:*", "-o", str(nonexistent_dir), "--format", "json",
+                "--api-key", "test-key"
+            ])
+
+        # Should fail with exit code 1
+        assert result.exit_code == 1
+        # Should have clean error message
+        assert "Error" in result.output or "error" in result.output.lower()
+        # Should NOT have Python traceback
+        assert "Traceback" not in result.output
+        assert "File \"" not in result.output

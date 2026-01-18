@@ -355,6 +355,43 @@ class TestCetusClientFetchPage:
         assert exc_info.value.status_code == 500
         client.close()
 
+    def test_fetch_page_extracts_error_detail_on_400(self, client: CetusClient, httpx_mock):
+        """_fetch_page should extract error detail from 400 response JSON.
+
+        When server returns 400 with {"detail": "error message"}, the client
+        should include that message in the APIError for helpful user feedback.
+        """
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost/api/query/",
+            status_code=400,
+            json={"detail": "Invalid query syntax: Cannot parse 'host:['"},
+        )
+
+        with pytest.raises(APIError) as exc_info:
+            client._fetch_page("host:[", "dns", "nvme")
+
+        # Should include the detail from the response
+        assert "Invalid query syntax" in str(exc_info.value)
+        assert exc_info.value.status_code == 400
+        client.close()
+
+    def test_fetch_page_handles_400_without_json(self, client: CetusClient, httpx_mock):
+        """_fetch_page should handle 400 response without JSON body gracefully."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost/api/query/",
+            status_code=400,
+            text="Bad Request",
+        )
+
+        with pytest.raises(APIError) as exc_info:
+            client._fetch_page("host:*", "dns", "nvme")
+
+        assert exc_info.value.status_code == 400
+        assert "Bad request" in str(exc_info.value)
+        client.close()
+
     def test_fetch_page_raises_connection_error_on_connect_failure(
         self, client: CetusClient, httpx_mock
     ):

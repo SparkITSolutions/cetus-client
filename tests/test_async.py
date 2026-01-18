@@ -293,7 +293,8 @@ class TestUserAgentHeader:
         request = httpx_mock.get_requests()[0]
         assert "User-Agent" in request.headers
         user_agent = request.headers["User-Agent"]
-        assert "cetus-client/0.0.1" in user_agent
+        from cetus import __version__
+        assert f"cetus-client/{__version__}" in user_agent
         assert "Python" in user_agent
         client.close()
 

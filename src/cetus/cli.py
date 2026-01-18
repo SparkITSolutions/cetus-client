@@ -177,6 +177,44 @@ def _write_or_append(
     return len(data)
 
 
+def _output_formatted_data(
+    data: list[dict],
+    output_format: str,
+    output_file: Path | None,
+    item_name: str = "records",
+) -> None:
+    """Output data in the specified format to file or stdout.
+
+    This is a common helper for commands that output formatted data
+    (alerts list, alerts results, etc.).
+
+    Args:
+        data: List of dicts to output
+        output_format: Format (json, jsonl, csv, table)
+        output_file: Optional file path, or None for stdout
+        item_name: Name for the items in success message (e.g., "alerts", "results")
+    """
+    formatter = get_formatter(output_format)
+
+    if output_file:
+        newline = "" if output_format == "csv" else None
+        with open(output_file, "w", encoding="utf-8", newline=newline) as f:
+            formatter.format_stream(data, f)
+        console.print(f"[green]Wrote {len(data)} {item_name} to {output_file}[/green]")
+    else:
+        # Write to stdout with UTF-8 encoding
+        if output_format == "table":
+            # Table format uses Rich console
+            stdout_console = Console(force_terminal=sys.stdout.isatty())
+            formatter.format_stream(data, stdout_console.file)
+        else:
+            newline = "" if output_format == "csv" else None
+            stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline=newline)
+            formatter.format_stream(data, stdout)
+            stdout.flush()
+            stdout.detach()
+
+
 def execute_query_and_output(
     ctx: click.Context,
     search: str,
@@ -212,6 +250,10 @@ def execute_query_and_output(
     config = Config.load(api_key=api_key, host=host)
     if since_days is None:
         since_days = config.since_days
+
+    # Validate since_days is non-negative
+    if since_days is not None and since_days < 0:
+        raise ValueError("since-days cannot be negative")
 
     # Handle output_prefix: generate timestamped filename
     # output_prefix mode creates new files each run, still uses markers
@@ -329,17 +371,13 @@ def execute_query_and_output(
                     f"in {elapsed:.2f}s[/green]"
                 )
     else:
-        # Write to stdout - use stream for proper encoding handling
-        # For table format, use Rich console directly to handle Unicode
-        if output_format == "table":
-            stdout_console = Console(force_terminal=sys.stdout.isatty())
-            formatter.format_stream(result.data, stdout_console.file)
-        else:
-            # For other formats, use UTF-8 wrapper on stdout
-            stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-            formatter.format_stream(result.data, stdout)
-            stdout.flush()
-            stdout.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
+        # Write to stdout - use UTF-8 wrapper on Windows (cp1252 default can't handle Unicode)
+        # Use newline="" for CSV to let csv module handle line endings, None for others
+        newline = "" if output_format == "csv" else None
+        stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline=newline)
+        formatter.format_stream(result.data, stdout)
+        stdout.flush()
+        stdout.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
         console.print(
             f"\n[dim]{result.total_fetched} records in {elapsed:.2f}s[/dim]", highlight=False
         )
@@ -385,6 +423,10 @@ def execute_streaming_query(
     config = Config.load(api_key=api_key, host=host)
     if since_days is None:
         since_days = config.since_days
+
+    # Validate since_days is non-negative
+    if since_days is not None and since_days < 0:
+        raise ValueError("since-days cannot be negative")
 
     # --stream implies jsonl format unless explicitly specified
     if output_format is None:
@@ -558,16 +600,13 @@ def execute_streaming_query(
         else:
             _write_or_append(buffered_data, output_file, output_format, is_incremental)
     elif buffered_data and not output_file:
-        # Stdout with buffered format
+        # Stdout with buffered format - use UTF-8 wrapper for all formats
         formatter = get_formatter(output_format)
-        if output_format == "table":
-            stdout_console = Console(force_terminal=sys.stdout.isatty())
-            formatter.format_stream(buffered_data, stdout_console.file)
-        else:
-            stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-            formatter.format_stream(buffered_data, stdout)
-            stdout.flush()
-            stdout.detach()
+        newline = "" if output_format == "csv" else None
+        stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline=newline)
+        formatter.format_stream(buffered_data, stdout)
+        stdout.flush()
+        stdout.detach()
 
     # Clean up empty files created in incremental mode with no results
     # (streaming formats open the file before knowing if there will be data)
@@ -793,8 +832,14 @@ def query(
                 host=host,
                 output_prefix=output_prefix,
             )
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+    except OSError as e:
+        console.print(f"[red]Error:[/red] Cannot write to output file: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted[/yellow]")
@@ -843,7 +888,10 @@ def config_set(key: str, value: str) -> None:
         elif key == "timeout":
             cfg.timeout = int(value)
         elif key == "since-days":
-            cfg.since_days = int(value)
+            days = int(value)
+            if days < 0:
+                raise ValueError("since-days cannot be negative")
+            cfg.since_days = days
 
         cfg.save()
         console.print(f"[green]Set {key} successfully[/green]")
@@ -924,12 +972,29 @@ def alerts() -> None:
     type=click.Choice(["raw", "terms", "structured"]),
     help="Filter by alert type",
 )
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["json", "jsonl", "csv", "table"]),
+    default="table",
+    help="Output format (default: table)",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_file",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    help="Write output to file instead of stdout",
+)
 @click.option("--api-key", envvar="CETUS_API_KEY", help="API key")
 @click.option("--host", envvar="CETUS_HOST", help="API host")
 def alerts_list(
     owned: bool,
     shared: bool,
     alert_type: str | None,
+    output_format: str,
+    output_file: Path | None,
     api_key: str | None,
     host: str | None,
 ) -> None:
@@ -940,10 +1005,12 @@ def alerts_list(
 
     \b
     Examples:
-        cetus alerts list                    # Your alerts
-        cetus alerts list --shared           # Your alerts + shared
-        cetus alerts list --no-owned --shared  # Only shared alerts
-        cetus alerts list --type raw         # Only raw query alerts
+        cetus alerts list                       # Your alerts (table)
+        cetus alerts list --shared              # Your alerts + shared
+        cetus alerts list --no-owned --shared   # Only shared alerts
+        cetus alerts list --type raw            # Only raw query alerts
+        cetus alerts list --format json         # JSON output
+        cetus alerts list -f csv -o alerts.csv  # Export to CSV
     """
     try:
         config = Config.load(api_key=api_key, host=host)
@@ -961,36 +1028,58 @@ def alerts_list(
             console.print("[dim]No alerts found[/dim]")
             return
 
-        from rich.table import Table
+        # Convert Alert objects to dicts for output
+        alerts_as_dicts = [
+            {
+                "id": alert.id,
+                "type": alert.alert_type,
+                "title": alert.title,
+                "description": alert.description,
+                "owned": alert.owned,
+                "shared_by": alert.shared_by,
+                "query_preview": alert.query_preview,
+            }
+            for alert in alerts_data
+        ]
 
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("ID", style="dim")
-        table.add_column("Type")
-        table.add_column("Title")
-        table.add_column("Description")
-        table.add_column("Owner/Shared By")
+        if output_format == "table" and not output_file:
+            # Special handling for table to stdout - use Rich table with colors
+            from rich.table import Table
 
-        type_colors = {"raw": "green", "terms": "blue", "structured": "cyan"}
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("ID", style="dim")
+            table.add_column("Type")
+            table.add_column("Title")
+            table.add_column("Description")
+            table.add_column("Owner/Shared By")
 
-        for alert in alerts_data:
-            type_color = type_colors.get(alert.alert_type, "white")
-            owner_col = "You" if alert.owned else f"[dim]{alert.shared_by}[/dim]"
-            desc = alert.description
-            if len(desc) > 40:
-                desc = desc[:40] + "..."
-            table.add_row(
-                str(alert.id),
-                f"[{type_color}]{alert.alert_type}[/{type_color}]",
-                alert.title,
-                desc,
-                owner_col,
-            )
+            type_colors = {"raw": "green", "terms": "blue", "structured": "cyan"}
 
-        console.print(table)
-        console.print(f"\n[dim]Total: {len(alerts_data)} alert(s)[/dim]")
+            for alert in alerts_data:
+                type_color = type_colors.get(alert.alert_type, "white")
+                owner_col = "You" if alert.owned else f"[dim]{alert.shared_by}[/dim]"
+                desc = alert.description
+                if len(desc) > 40:
+                    desc = desc[:40] + "..."
+                table.add_row(
+                    str(alert.id),
+                    f"[{type_color}]{alert.alert_type}[/{type_color}]",
+                    alert.title,
+                    desc,
+                    owner_col,
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Total: {len(alerts_data)} alert(s)[/dim]")
+        else:
+            # Use common helper for all other cases
+            _output_formatted_data(alerts_as_dicts, output_format, output_file, "alerts")
 
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+    except OSError as e:
+        console.print(f"[red]Error:[/red] Cannot write to output file: {e}")
         sys.exit(1)
 
 
@@ -1039,7 +1128,6 @@ def alerts_results(
     """
     try:
         config = Config.load(api_key=api_key, host=host)
-        formatter = get_formatter(output_format)
 
         with CetusClient.from_config(config) as client:
             with Progress(
@@ -1055,24 +1143,14 @@ def alerts_results(
             console.print("[dim]No results found for this alert[/dim]")
             return
 
-        # Output results
-        if output_file:
-            with open(output_file, "w", encoding="utf-8") as f:
-                formatter.format_stream(results, f)
-            console.print(f"[green]Wrote {len(results)} results to {output_file}[/green]")
-        else:
-            # Write to stdout
-            if output_format == "table":
-                stdout_console = Console(force_terminal=sys.stdout.isatty())
-                formatter.format_stream(results, stdout_console.file)
-            else:
-                stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-                formatter.format_stream(results, stdout)
-                stdout.flush()
-                stdout.detach()  # Detach so wrapper doesn't close sys.stdout.buffer
+        # Output results using common helper
+        _output_formatted_data(results, output_format, output_file, "results")
 
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+    except OSError as e:
+        console.print(f"[red]Error:[/red] Cannot write to output file: {e}")
         sys.exit(1)
 
 
@@ -1108,6 +1186,13 @@ def alerts_results(
     help="Write output to file instead of stdout",
 )
 @click.option(
+    "--output-prefix",
+    "-p",
+    "output_prefix",
+    type=str,
+    help="Timestamped files (e.g., -p results -> results_<timestamp>.jsonl)",
+)
+@click.option(
     "--since-days",
     "-d",
     type=int,
@@ -1134,6 +1219,7 @@ def alerts_backtest(
     media: str,
     output_format: str | None,
     output_file: Path | None,
+    output_prefix: str | None,
     since_days: int | None,
     no_marker: bool,
     stream: bool,
@@ -1154,8 +1240,14 @@ def alerts_backtest(
         cetus alerts backtest 123 --index dns
         cetus alerts backtest 123 --format table
         cetus alerts backtest 123 -o results.json --since-days 30
+        cetus alerts backtest 123 -p results --since-days 30
         cetus alerts backtest 123 --stream
     """
+    # Validate mutually exclusive options
+    if output_file and output_prefix:
+        console.print("[red]Error:[/red] --output and --output-prefix are mutually exclusive")
+        sys.exit(1)
+
     try:
         config = Config.load(api_key=api_key, host=host)
 
@@ -1196,6 +1288,7 @@ def alerts_backtest(
                 no_marker=no_marker,
                 api_key=api_key,
                 host=host,
+                output_prefix=output_prefix,
             )
         else:
             # Default to json for non-streaming
@@ -1210,10 +1303,17 @@ def alerts_backtest(
                 no_marker=no_marker,
                 api_key=api_key,
                 host=host,
+                output_prefix=output_prefix,
             )
 
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+    except OSError as e:
+        console.print(f"[red]Error:[/red] Cannot write to output file: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted[/yellow]")

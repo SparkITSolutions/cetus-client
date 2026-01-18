@@ -1,3 +1,5 @@
 """Cetus CLI - Client for the Cetus threat intelligence alerting API."""
 
-__version__ = "0.0.1"
+from importlib.metadata import version
+
+__version__ = version("cetus-client")

@@ -34,6 +34,42 @@ ruff check src/
 pytest
 ```
 
+## Editable Installs
+
+When installed with `pip install -e .` (editable mode), the `cetus` command runs directly from source code in `src/cetus/`. Any changes to the source files are immediately reflected without reinstalling.
+
+**How it works:**
+- The installed package contains a `.pth` file pointing to the source directory
+- Python imports modules directly from `src/cetus/` at runtime
+- Entry point scripts (like `cetus.exe`) invoke `cetus.cli:main` from source
+
+**When to use:**
+- Development and testing - changes are instant
+- Debugging - breakpoints and print statements work immediately
+
+**Note:** The venv at the repo root (`alerting_app/.venv`) is shared with the Django app. Install cetus-client from the repo root:
+```bash
+pip install -e "./cetus-client[dev]"
+```
+
+## Version Management
+
+Version is defined in **one place only**: `pyproject.toml`
+
+The `src/cetus/__init__.py` uses `importlib.metadata.version()` to read it at runtime:
+```python
+from importlib.metadata import version
+__version__ = version("cetus-client")
+```
+
+**When bumping version:** Only update `version = "X.Y.Z"` in `pyproject.toml`
+
+**In tests:** Never hardcode version strings. Import from the package:
+```python
+from cetus import __version__
+assert f"cetus-client/{__version__}" in user_agent
+```
+
 ## Architecture
 
 The CLI is built with Click and uses httpx for HTTP requests. All source code is in `src/cetus/`.

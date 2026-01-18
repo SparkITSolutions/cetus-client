@@ -192,13 +192,29 @@ class CetusClient:
     def __exit__(self, *args) -> None:
         self.close()
 
+    def _is_dsl_query(self, query: str) -> bool:
+        """Check if a query is Elasticsearch DSL (JSON) rather than Lucene.
+
+        DSL queries start with '{' and are valid JSON objects.
+        """
+        import json
+
+        stripped = query.strip()
+        if not stripped.startswith('{'):
+            return False
+        try:
+            parsed = json.loads(stripped)
+            return isinstance(parsed, dict)
+        except (json.JSONDecodeError, ValueError):
+            return False
+
     def _build_time_filter(
         self,
         index: Index,
         since_days: int | None,
         marker: Marker | None,
     ) -> str:
-        """Build the timestamp filter suffix for the query."""
+        """Build the timestamp filter suffix for Lucene queries."""
         timestamp_field = f"{index}_timestamp"
 
         if marker:
@@ -211,10 +227,62 @@ class CetusClient:
         else:
             return ""
 
+    def _build_full_query(
+        self,
+        search: str,
+        index: Index,
+        since_days: int | None,
+        marker: Marker | None,
+    ) -> str:
+        """Build the full query with time filter.
+
+        For Lucene queries: wraps with parentheses and appends time filter.
+        For DSL queries: wraps the DSL in a bool query with time filter.
+        """
+        import json
+
+        timestamp_field = f"{index}_timestamp"
+
+        if self._is_dsl_query(search):
+            # DSL query - need to wrap in bool with time filter
+            parsed_query = json.loads(search.strip())
+
+            # If the query has a top-level "query" key (full ES query format),
+            # extract the inner query body. ES expects just the query body.
+            if "query" in parsed_query and len(parsed_query) == 1:
+                parsed_query = parsed_query["query"]
+
+            # Determine the time constraint
+            if marker:
+                time_value = marker.last_timestamp
+            elif since_days:
+                since_date = (datetime.today() - timedelta(days=since_days)).replace(microsecond=0)
+                time_value = since_date.isoformat()
+            else:
+                # No time filter needed, return unwrapped query
+                return json.dumps(parsed_query)
+
+            # Build a DSL query with both the original query and time filter
+            wrapped_query = {
+                "bool": {
+                    "must": [parsed_query],
+                    "filter": [
+                        {"range": {timestamp_field: {"gte": time_value}}}
+                    ]
+                }
+            }
+            return json.dumps(wrapped_query)
+        else:
+            # Lucene query - use string concatenation
+            time_filter = self._build_time_filter(index, since_days, marker)
+            return f"({search}){time_filter}"
+
     def _handle_error_response(self, response: httpx.Response) -> None:
         """Handle error responses, sanitizing error messages.
 
         Raises appropriate exceptions for error status codes.
+        For 400 errors (bad request), attempts to extract the error detail
+        from the response to provide helpful feedback.
         """
         if response.status_code == 401:
             raise AuthenticationError(
@@ -223,6 +291,18 @@ class CetusClient:
             )
         elif response.status_code == 403:
             raise AuthenticationError("Access denied - check your permissions")
+        elif response.status_code == 400:
+            # For 400 errors, try to extract the error detail from JSON response
+            # DRF returns {"detail": "error message"} for ParseError
+            logger.debug("API error response: %s", response.text[:500])
+            try:
+                error_data = response.json()
+                detail = error_data.get("detail", "")
+                if detail:
+                    raise APIError(detail, status_code=400)
+            except (ValueError, KeyError):
+                pass
+            raise APIError("Bad request", status_code=400)
         elif response.status_code >= 400:
             # Log full error for debugging, but don't expose to user
             logger.debug("API error response: %s", response.text[:500])
@@ -325,8 +405,7 @@ class CetusClient:
         timestamp_field = f"{index}_timestamp"
 
         # Build initial query with time filter (only needed for first request)
-        time_filter = self._build_time_filter(index, since_days, marker)
-        full_query = f"({search}){time_filter}"
+        full_query = self._build_full_query(search, index, since_days, marker)
 
         while True:
             response = self._fetch_page(full_query, index, media, pit_id, search_after)
@@ -492,8 +571,7 @@ class CetusClient:
         timestamp_field = f"{index}_timestamp"
 
         # Build initial query with time filter (only needed for first request)
-        time_filter = self._build_time_filter(index, since_days, marker)
-        full_query = f"({search}){time_filter}"
+        full_query = self._build_full_query(search, index, since_days, marker)
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             while True:
@@ -574,8 +652,7 @@ class CetusClient:
         search_after: list | None = None
         marker_uuid = marker.last_uuid if marker else None
 
-        time_filter = self._build_time_filter(index, since_days, marker)
-        full_query = f"({search}){time_filter}"
+        full_query = self._build_full_query(search, index, since_days, marker)
 
         while True:
             response = self._fetch_page(full_query, index, media, pit_id, search_after)
@@ -641,8 +718,7 @@ class CetusClient:
         marker_uuid = marker.last_uuid if marker else None
         past_marker = marker_uuid is None
 
-        time_filter = self._build_time_filter(index, since_days, marker)
-        full_query = f"({search}){time_filter}"
+        full_query = self._build_full_query(search, index, since_days, marker)
 
         body = {
             "query": full_query,
@@ -746,8 +822,7 @@ class CetusClient:
         marker_uuid = marker.last_uuid if marker else None
         past_marker = marker_uuid is None
 
-        time_filter = self._build_time_filter(index, since_days, marker)
-        full_query = f"({search}){time_filter}"
+        full_query = self._build_full_query(search, index, since_days, marker)
 
         body = {
             "query": full_query,
