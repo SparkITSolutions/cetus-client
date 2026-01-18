@@ -48,7 +48,8 @@ Test categories (111 total):
 - Output directory errors: 2 tests (regular and streaming)
 - Alerts list combined flags: 1 test (--owned and --shared)
 - Verbose mode with markers: 1 test
-- Query edge cases: 6 tests (whitespace, unicode, large pagination xfail, special chars, long queries)
+- Query edge cases: 6 tests (whitespace, unicode, large pagination xfail,
+  special chars, long queries)
 - Alert access permissions: 2 tests
 - Output prefix formats: 2 tests (JSON, CSV with -p option)
 - Streaming table warning: 1 test
@@ -93,6 +94,7 @@ def api_key() -> str:
     if not key:
         # Fall back to config file
         from cetus.config import Config
+
         config = Config.load()
         key = config.api_key
     if not key:
@@ -403,11 +405,16 @@ class TestCLICommands:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed with results
@@ -427,12 +434,17 @@ class TestCLICommands:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
                 "--stream",
-                "--format", "jsonl",
-                "--api-key", api_key,
-                "--host", host,
+                "--format",
+                "jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -447,9 +459,12 @@ class TestCLICommands:
         result = runner.invoke(
             main,
             [
-                "alerts", "list",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "list",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (may show "No alerts found" which is fine)
@@ -475,9 +490,7 @@ class TestFileOutputModes:
 
     DATA_QUERY = "host:microsoft.com"
 
-    def test_cli_output_file_creates_file(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_cli_output_file_creates_file(self, api_key: str, host: str, tmp_path) -> None:
         """Test -o creates output file with real data."""
         from click.testing import CliRunner
 
@@ -491,13 +504,19 @@ class TestFileOutputModes:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "jsonl",
-                "-o", str(output_file),
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
                 "--no-marker",  # Don't save marker for this test
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -524,13 +543,19 @@ class TestFileOutputModes:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "jsonl",
-                "-p", prefix,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "jsonl",
+                "-p",
+                prefix,
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -540,9 +565,7 @@ class TestFileOutputModes:
         assert len(files) == 1
         assert files[0].stat().st_size > 0
 
-    def test_cli_output_csv_format(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_cli_output_csv_format(self, api_key: str, host: str, tmp_path) -> None:
         """Test CSV output format works correctly."""
         from click.testing import CliRunner
 
@@ -556,13 +579,19 @@ class TestFileOutputModes:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "csv",
-                "-o", str(output_file),
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "csv",
+                "-o",
+                str(output_file),
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -575,9 +604,7 @@ class TestFileOutputModes:
         # First line should be CSV header
         assert "uuid" in lines[0] or "host" in lines[0]
 
-    def test_cli_streaming_with_output_file(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_cli_streaming_with_output_file(self, api_key: str, host: str, tmp_path) -> None:
         """Test --stream with -o creates file."""
         from click.testing import CliRunner
 
@@ -591,13 +618,18 @@ class TestFileOutputModes:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
                 "--stream",
-                "-o", str(output_file),
+                "-o",
+                str(output_file),
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -613,11 +645,8 @@ class TestIncrementalQueries:
 
     DATA_QUERY = "host:microsoft.com"
 
-    def test_marker_saved_and_used(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_marker_saved_and_used(self, api_key: str, host: str, tmp_path) -> None:
         """Test that markers are saved and affect subsequent queries."""
-        from pathlib import Path
 
         from click.testing import CliRunner
 
@@ -629,9 +658,7 @@ class TestIncrementalQueries:
 
         output_file = tmp_path / "results.jsonl"
 
-        runner = CliRunner(
-            env={"CETUS_DATA_DIR": str(tmp_path)}
-        )
+        runner = CliRunner(env={"CETUS_DATA_DIR": str(tmp_path)})
 
         # First run - should fetch data and save marker
         result1 = runner.invoke(
@@ -639,12 +666,18 @@ class TestIncrementalQueries:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result1.exit_code == 0
@@ -663,21 +696,25 @@ class TestIncrementalQueries:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result2.exit_code == 0
         # Should either append or report no new records
         assert "Appended" in result2.output or "No new records" in result2.output
 
-    def test_output_prefix_with_markers(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_output_prefix_with_markers(self, api_key: str, host: str, tmp_path) -> None:
         """Test -p mode saves markers for incremental queries."""
         from click.testing import CliRunner
 
@@ -685,9 +722,7 @@ class TestIncrementalQueries:
 
         prefix = str(tmp_path / "export")
 
-        runner = CliRunner(
-            env={"CETUS_DATA_DIR": str(tmp_path)}
-        )
+        runner = CliRunner(env={"CETUS_DATA_DIR": str(tmp_path)})
 
         # First run
         result1 = runner.invoke(
@@ -695,12 +730,18 @@ class TestIncrementalQueries:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "jsonl",
-                "-p", prefix,
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "jsonl",
+                "-p",
+                prefix,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result1.exit_code == 0
@@ -715,6 +756,7 @@ class TestIncrementalQueries:
 
         # Second run (immediately after - likely no new data)
         import time
+
         time.sleep(1)  # Ensure different timestamp
 
         result2 = runner.invoke(
@@ -722,12 +764,18 @@ class TestIncrementalQueries:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "7",
-                "--format", "jsonl",
-                "-p", prefix,
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "--format",
+                "jsonl",
+                "-p",
+                prefix,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result2.exit_code == 0
@@ -754,6 +802,7 @@ class TestCLIVersion:
         assert "cetus" in result.output.lower()
         # Should contain a version number pattern
         import re
+
         assert re.search(r"\d+\.\d+\.\d+", result.output)
 
 
@@ -771,9 +820,7 @@ class TestCLIMarkers:
         assert result.exit_code == 0
         assert "No markers" in result.output or "0" in result.output or result.output.strip() == ""
 
-    def test_markers_list_shows_markers(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_markers_list_shows_markers(self, api_key: str, host: str, tmp_path) -> None:
         """Test markers list shows saved markers after a query."""
         from click.testing import CliRunner
 
@@ -789,12 +836,18 @@ class TestCLIMarkers:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
 
@@ -820,12 +873,18 @@ class TestCLIMarkers:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
 
@@ -835,7 +894,7 @@ class TestCLIMarkers:
         assert "Cleared" in result.output
 
         # Verify cleared
-        list_result = runner.invoke(main, ["markers", "list"])
+        runner.invoke(main, ["markers", "list"])  # Check command runs
         # Should be empty now
         marker_files = list(tmp_path.glob("markers/*.json"))
         assert len(marker_files) == 0
@@ -871,13 +930,21 @@ class TestAlertResults:
         result = runner.invoke(
             main,
             [
-                "alerts", "results", "999999",  # Non-existent ID
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "results",
+                "999999",  # Non-existent ID
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with 404 or similar error
-        assert result.exit_code != 0 or "not found" in result.output.lower() or "error" in result.output.lower()
+        assert (
+            result.exit_code != 0
+            or "not found" in result.output.lower()
+            or "error" in result.output.lower()
+        )
 
 
 class TestAlertBacktest:
@@ -893,13 +960,21 @@ class TestAlertBacktest:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", "999999",  # Non-existent ID
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                "999999",  # Non-existent ID
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with 404 or similar error
-        assert result.exit_code != 0 or "not found" in result.output.lower() or "error" in result.output.lower()
+        assert (
+            result.exit_code != 0
+            or "not found" in result.output.lower()
+            or "error" in result.output.lower()
+        )
 
 
 class TestConnectionErrors:
@@ -915,9 +990,12 @@ class TestConnectionErrors:
         result = runner.invoke(
             main,
             [
-                "query", "host:test.com",
-                "--host", "nonexistent.invalid.host.example",
-                "--api-key", "test-key",
+                "query",
+                "host:test.com",
+                "--host",
+                "nonexistent.invalid.host.example",
+                "--api-key",
+                "test-key",
             ],
         )
         assert result.exit_code != 0
@@ -966,11 +1044,16 @@ class TestEmptyResults:
             [
                 "query",
                 "uuid:00000000-0000-0000-0000-000000000000",
-                "--index", "alerting",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "alerting",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -981,9 +1064,7 @@ class TestEmptyResults:
 class TestQuerySyntaxErrors:
     """E2E tests for query syntax error handling."""
 
-    def test_invalid_lucene_syntax_returns_error(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_invalid_lucene_syntax_returns_error(self, api_key: str, host: str) -> None:
         """Test that invalid Lucene syntax returns an error.
 
         The server should return a 400 Bad Request with a helpful error message
@@ -999,10 +1080,14 @@ class TestQuerySyntaxErrors:
             [
                 "query",
                 "host:[",  # Invalid Lucene syntax - unclosed bracket
-                "--index", "dns",
-                "--since-days", "1",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with an error
@@ -1024,11 +1109,16 @@ class TestQuerySyntaxErrors:
             [
                 "query",
                 "nonexistent_field:value",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (ES allows querying non-existent fields, returns empty)
@@ -1052,11 +1142,16 @@ class TestTableFormat:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "table",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "table",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1080,11 +1175,16 @@ class TestVerboseMode:
                 "-v",  # Verbose flag
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1107,11 +1207,16 @@ class TestSinceDaysEdgeCases:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "0",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "0",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (may or may not have results for today)
@@ -1130,11 +1235,16 @@ class TestSinceDaysEdgeCases:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "-1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "-1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with error
@@ -1174,10 +1284,14 @@ class TestAlertTypeFiltering:
         result = runner.invoke(
             main,
             [
-                "alerts", "list",
-                "--type", "raw",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "list",
+                "--type",
+                "raw",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1196,10 +1310,14 @@ class TestAlertTypeFiltering:
         result = runner.invoke(
             main,
             [
-                "alerts", "list",
-                "--type", "terms",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "list",
+                "--type",
+                "terms",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1212,9 +1330,7 @@ class TestAlertOperationsWithRealData:
     actual alerts, not just 404 cases.
     """
 
-    def test_alert_results_with_existing_alert(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_alert_results_with_existing_alert(self, api_key: str, host: str) -> None:
         """Test alert results with an alert that exists."""
         from cetus.client import CetusClient
 
@@ -1233,9 +1349,7 @@ class TestAlertOperationsWithRealData:
         finally:
             client.close()
 
-    def test_cli_alert_results_with_existing_alert(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_cli_alert_results_with_existing_alert(self, api_key: str, host: str) -> None:
         """Test CLI alert results with an existing alert."""
         from click.testing import CliRunner
 
@@ -1252,6 +1366,7 @@ class TestAlertOperationsWithRealData:
 
         # Extract first alert ID from table output (handles both ASCII | and Unicode │)
         import re
+
         match = re.search(r"[│|]\s*(\d+)\s*[│|]", list_result.output)
         assert match, f"Could not parse alert ID from output: {list_result.output[:200]}"
 
@@ -1261,19 +1376,22 @@ class TestAlertOperationsWithRealData:
         result = runner.invoke(
             main,
             [
-                "alerts", "results", alert_id,
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "results",
+                alert_id,
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
         # Should either have JSON array or "No results" message
         assert "[" in result.output or "No results" in result.output
 
-    def test_cli_alert_backtest_with_existing_alert(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_cli_alert_backtest_with_existing_alert(self, api_key: str, host: str) -> None:
         """Test CLI alert backtest with an existing alert."""
         from click.testing import CliRunner
 
@@ -1290,6 +1408,7 @@ class TestAlertOperationsWithRealData:
 
         # Extract first alert ID from table output (handles both ASCII | and Unicode │)
         import re
+
         match = re.search(r"[│|]\s*(\d+)\s*[│|]", list_result.output)
         assert match, f"Could not parse alert ID from output: {list_result.output[:200]}"
 
@@ -1299,11 +1418,17 @@ class TestAlertOperationsWithRealData:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", alert_id,
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                alert_id,
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1365,9 +1490,7 @@ class TestAlertsListEdgeCases:
         assert result.exit_code == 0
         assert "warning" in result.output.lower() or "no alerts" in result.output.lower()
 
-    def test_alerts_list_filter_by_type_structured(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_alerts_list_filter_by_type_structured(self, api_key: str, host: str) -> None:
         """Test listing alerts filtered by type=structured."""
         from click.testing import CliRunner
 
@@ -1377,10 +1500,14 @@ class TestAlertsListEdgeCases:
         result = runner.invoke(
             main,
             [
-                "alerts", "list",
-                "--type", "structured",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "list",
+                "--type",
+                "structured",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1405,9 +1532,13 @@ class TestVerboseModeExtended:
         result = runner.invoke(
             main,
             [
-                "-v", "alerts", "list",
-                "--api-key", api_key,
-                "--host", host,
+                "-v",
+                "alerts",
+                "list",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1479,10 +1610,14 @@ class TestMutuallyExclusiveOptions:
         result = runner.invoke(
             main,
             [
-                "query", "host:test.com",
-                "-o", str(output_file),
-                "-p", prefix,
-                "--api-key", "test-key",
+                "query",
+                "host:test.com",
+                "-o",
+                str(output_file),
+                "-p",
+                prefix,
+                "--api-key",
+                "test-key",
             ],
         )
         assert result.exit_code == 1
@@ -1492,9 +1627,7 @@ class TestMutuallyExclusiveOptions:
 class TestMarkersClearByIndex:
     """E2E tests for markers clear with index filtering."""
 
-    def test_markers_clear_by_index(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_markers_clear_by_index(self, api_key: str, host: str, tmp_path) -> None:
         """Test that markers clear --index only clears that index."""
         from click.testing import CliRunner
 
@@ -1511,19 +1644,24 @@ class TestMarkersClearByIndex:
                 [
                     "query",
                     "host:microsoft.com",
-                    "--index", idx,
-                    "--since-days", "1",
-                    "-o", str(tmp_path / f"{idx}_results.jsonl"),
-                    "--format", "jsonl",
-                    "--api-key", api_key,
-                    "--host", host,
+                    "--index",
+                    idx,
+                    "--since-days",
+                    "1",
+                    "-o",
+                    str(tmp_path / f"{idx}_results.jsonl"),
+                    "--format",
+                    "jsonl",
+                    "--api-key",
+                    api_key,
+                    "--host",
+                    host,
                 ],
             )
 
         # Check markers exist
         marker_files_before = list(markers_dir.glob("*.json"))
         dns_markers_before = [f for f in marker_files_before if "dns" in f.name]
-        certstream_markers_before = [f for f in marker_files_before if "certstream" in f.name]
 
         # Only proceed if we have markers to clear
         if dns_markers_before:
@@ -1579,9 +1717,7 @@ class TestStreamingCSVFormat:
 
     DATA_QUERY = "host:microsoft.com"
 
-    def test_streaming_csv_to_file(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_streaming_csv_to_file(self, api_key: str, host: str, tmp_path) -> None:
         """Test streaming query with CSV format writes valid CSV file."""
         from click.testing import CliRunner
 
@@ -1595,14 +1731,20 @@ class TestStreamingCSVFormat:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
                 "--stream",
-                "--format", "csv",
-                "-o", str(output_file),
+                "--format",
+                "csv",
+                "-o",
+                str(output_file),
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1661,12 +1803,18 @@ class TestMediaAllOption:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--media", "all",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--media",
+                "all",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed with extended timeout
@@ -1677,9 +1825,7 @@ class TestMediaAllOption:
 class TestBacktestWithStreaming:
     """E2E tests for backtest command with streaming mode."""
 
-    def test_backtest_streaming_mode(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_backtest_streaming_mode(self, api_key: str, host: str, tmp_path) -> None:
         """Test backtest command with --stream flag."""
         from click.testing import CliRunner
 
@@ -1696,6 +1842,7 @@ class TestBacktestWithStreaming:
 
         # Extract first alert ID from table output
         import re
+
         match = re.search(r"[│|]\s*(\d+)\s*[│|]", list_result.output)
         if not match:
             pytest.skip("Could not parse alert ID")
@@ -1707,13 +1854,19 @@ class TestBacktestWithStreaming:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", alert_id,
+                "alerts",
+                "backtest",
+                alert_id,
                 "--stream",
-                "--since-days", "1",
-                "-o", str(output_file),
+                "--since-days",
+                "1",
+                "-o",
+                str(output_file),
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1734,10 +1887,14 @@ class TestEmptyQueryHandling:
         result = runner.invoke(
             main,
             [
-                "query", "",
-                "--since-days", "1",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                "",
+                "--since-days",
+                "1",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with an error about invalid query syntax
@@ -1748,9 +1905,7 @@ class TestEmptyQueryHandling:
 class TestOutputDirectoryErrors:
     """E2E tests for output directory error handling."""
 
-    def test_output_to_nonexistent_directory(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_output_to_nonexistent_directory(self, api_key: str, host: str) -> None:
         """Test that output to non-existent directory returns clean error."""
         from click.testing import CliRunner
 
@@ -1760,11 +1915,16 @@ class TestOutputDirectoryErrors:
         result = runner.invoke(
             main,
             [
-                "query", "host:microsoft.com",
-                "--since-days", "1",
-                "-o", "nonexistent_directory_xyz/results.json",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                "host:microsoft.com",
+                "--since-days",
+                "1",
+                "-o",
+                "nonexistent_directory_xyz/results.json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with a clean error message (not a traceback)
@@ -1774,11 +1934,9 @@ class TestOutputDirectoryErrors:
         assert "error" in output_lower
         # Should NOT have traceback indicators
         assert "traceback" not in output_lower
-        assert "file \"" not in output_lower  # Python traceback pattern
+        assert 'file "' not in output_lower  # Python traceback pattern
 
-    def test_streaming_output_to_nonexistent_directory(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_streaming_output_to_nonexistent_directory(self, api_key: str, host: str) -> None:
         """Test that streaming output to non-existent directory returns clean error."""
         from click.testing import CliRunner
 
@@ -1788,12 +1946,17 @@ class TestOutputDirectoryErrors:
         result = runner.invoke(
             main,
             [
-                "query", "host:microsoft.com",
-                "--since-days", "1",
+                "query",
+                "host:microsoft.com",
+                "--since-days",
+                "1",
                 "--stream",
-                "-o", "nonexistent_directory_xyz/results.jsonl",
-                "--api-key", api_key,
-                "--host", host,
+                "-o",
+                "nonexistent_directory_xyz/results.jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with a clean error message
@@ -1806,9 +1969,7 @@ class TestOutputDirectoryErrors:
 class TestAlertsListCombinedFlags:
     """E2E tests for alerts list with combined owned and shared flags."""
 
-    def test_alerts_list_owned_and_shared_together(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_alerts_list_owned_and_shared_together(self, api_key: str, host: str) -> None:
         """Test alerts list with both --owned and --shared flags."""
         from click.testing import CliRunner
 
@@ -1818,11 +1979,14 @@ class TestAlertsListCombinedFlags:
         result = runner.invoke(
             main,
             [
-                "alerts", "list",
+                "alerts",
+                "list",
                 "--owned",
                 "--shared",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed and show combined results
@@ -1834,9 +1998,7 @@ class TestAlertsListCombinedFlags:
 class TestVerboseModeWithMarkers:
     """E2E tests for verbose mode with file output and markers."""
 
-    def test_verbose_mode_shows_marker_saved(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_verbose_mode_shows_marker_saved(self, api_key: str, host: str, tmp_path) -> None:
         """Test that verbose mode shows marker saved message."""
         from click.testing import CliRunner
 
@@ -1851,12 +2013,18 @@ class TestVerboseModeWithMarkers:
                 "-v",  # Verbose flag
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -1867,9 +2035,7 @@ class TestVerboseModeWithMarkers:
 class TestQueryEdgeCases:
     """E2E tests for query edge cases not covered elsewhere."""
 
-    def test_whitespace_only_query_returns_error(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_whitespace_only_query_returns_error(self, api_key: str, host: str) -> None:
         """Test that whitespace-only query returns appropriate error."""
         from click.testing import CliRunner
 
@@ -1879,10 +2045,14 @@ class TestQueryEdgeCases:
         result = runner.invoke(
             main,
             [
-                "query", "   ",  # Whitespace-only query
-                "--since-days", "1",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                "   ",  # Whitespace-only query
+                "--since-days",
+                "1",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with an error about invalid query syntax
@@ -1900,12 +2070,18 @@ class TestQueryEdgeCases:
         result = runner.invoke(
             main,
             [
-                "query", "host:münchen.de",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                "host:münchen.de",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (may have empty results, but no error)
@@ -1922,12 +2098,18 @@ class TestQueryEdgeCases:
         result = runner.invoke(
             main,
             [
-                "query", "host:日本.jp",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                "host:日本.jp",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (may have empty results, but no error)
@@ -1935,7 +2117,8 @@ class TestQueryEdgeCases:
         assert "[" in result.output  # Valid JSON array
 
     @pytest.mark.xfail(
-        reason="Pagination timeout for large result sets - PIT expiration. Fix deployed to server will resolve this.",
+        reason="Pagination timeout for large result sets - PIT expiration. "
+        "Fix deployed to server will resolve this.",
         strict=False,  # Allow test to pass once fix is deployed
     )
     def test_unicode_chinese_in_query(self, api_key: str, host: str) -> None:
@@ -1959,12 +2142,18 @@ class TestQueryEdgeCases:
         result = runner.invoke(
             main,
             [
-                "query", "host:微软.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                "host:微软.com",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (may have empty results, but no error)
@@ -1988,12 +2177,18 @@ class TestQueryEdgeCases:
         result = runner.invoke(
             main,
             [
-                "query", r'host:microsoft.com AND host:\(test\)',
-                "--index", "alerting",  # Use smaller index
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                r"host:microsoft.com AND host:\(test\)",
+                "--index",
+                "alerting",  # Use smaller index
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed or fail gracefully (not crash)
@@ -2020,12 +2215,18 @@ class TestQueryEdgeCases:
         result = runner.invoke(
             main,
             [
-                "query", long_query,
-                "--index", "alerting",  # Use smaller alerting index for speed
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "query",
+                long_query,
+                "--index",
+                "alerting",  # Use smaller alerting index for speed
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should complete without error (likely empty results)
@@ -2036,9 +2237,7 @@ class TestQueryEdgeCases:
 class TestAlertAccessPermissions:
     """E2E tests for alert access permission scenarios."""
 
-    def test_alert_get_nonexistent_returns_none(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_alert_get_nonexistent_returns_none(self, api_key: str, host: str) -> None:
         """Test that getting non-existent alert returns gracefully."""
         from cetus.client import CetusClient
 
@@ -2050,9 +2249,7 @@ class TestAlertAccessPermissions:
         finally:
             client.close()
 
-    def test_cli_backtest_nonexistent_alert(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_cli_backtest_nonexistent_alert(self, api_key: str, host: str) -> None:
         """Test CLI backtest with non-existent alert ID."""
         from click.testing import CliRunner
 
@@ -2062,10 +2259,15 @@ class TestAlertAccessPermissions:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", "99999999",
-                "--since-days", "1",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                "99999999",
+                "--since-days",
+                "1",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with clear error
@@ -2078,9 +2280,7 @@ class TestOutputPrefixFormats:
 
     DATA_QUERY = "host:microsoft.com"
 
-    def test_output_prefix_json_format(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_output_prefix_json_format(self, api_key: str, host: str, tmp_path) -> None:
         """Test -p with --format json creates JSON file."""
         from click.testing import CliRunner
 
@@ -2094,13 +2294,19 @@ class TestOutputPrefixFormats:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "-p", prefix,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "-p",
+                prefix,
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -2112,13 +2318,12 @@ class TestOutputPrefixFormats:
 
         # Verify it's valid JSON
         import json
+
         content = files[0].read_text()
         data = json.loads(content)
         assert isinstance(data, list)
 
-    def test_output_prefix_csv_format(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_output_prefix_csv_format(self, api_key: str, host: str, tmp_path) -> None:
         """Test -p with --format csv creates CSV file."""
         from click.testing import CliRunner
 
@@ -2132,13 +2337,19 @@ class TestOutputPrefixFormats:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "csv",
-                "-p", prefix,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "csv",
+                "-p",
+                prefix,
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -2170,12 +2381,17 @@ class TestStreamingTableWarning:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
                 "--stream",
-                "--format", "table",
-                "--api-key", api_key,
-                "--host", host,
+                "--format",
+                "table",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -2187,9 +2403,7 @@ class TestStreamingTableWarning:
 class TestBacktestWithDifferentIndices:
     """E2E tests for backtest with certstream and alerting indices."""
 
-    def test_backtest_certstream_index(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_backtest_certstream_index(self, api_key: str, host: str) -> None:
         """Test backtest command with --index certstream."""
         from click.testing import CliRunner
 
@@ -2205,6 +2419,7 @@ class TestBacktestWithDifferentIndices:
             pytest.skip("No owned alerts to test with")
 
         import re
+
         match = re.search(r"[│|]\s*(\d+)\s*[│|]", list_result.output)
         if not match:
             pytest.skip("Could not parse alert ID")
@@ -2215,21 +2430,26 @@ class TestBacktestWithDifferentIndices:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", alert_id,
-                "--index", "certstream",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                alert_id,
+                "--index",
+                "certstream",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
         # Should return valid JSON (may be empty array)
         assert "[" in result.output
 
-    def test_backtest_alerting_index(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_backtest_alerting_index(self, api_key: str, host: str) -> None:
         """Test backtest command with --index alerting."""
         from click.testing import CliRunner
 
@@ -2245,6 +2465,7 @@ class TestBacktestWithDifferentIndices:
             pytest.skip("No owned alerts to test with")
 
         import re
+
         match = re.search(r"[│|]\s*(\d+)\s*[│|]", list_result.output)
         if not match:
             pytest.skip("Could not parse alert ID")
@@ -2255,12 +2476,19 @@ class TestBacktestWithDifferentIndices:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", alert_id,
-                "--index", "alerting",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                alert_id,
+                "--index",
+                "alerting",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -2294,8 +2522,7 @@ class TestBacktestStructuredAlerts:
         runner = CliRunner()
         list_result = runner.invoke(
             main,
-            ["alerts", "list", "--owned", "--format", "json",
-             "--api-key", api_key, "--host", host],
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
         )
 
         if list_result.exit_code != 0:
@@ -2314,12 +2541,19 @@ class TestBacktestStructuredAlerts:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", alert_id,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                alert_id,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
 
@@ -2355,11 +2589,16 @@ class TestUnicodeOutputHandling:
             [
                 "query",
                 "host:*.google.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "table",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "table",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed without encoding error
@@ -2367,9 +2606,7 @@ class TestUnicodeOutputHandling:
         # Should have table formatting
         assert "│" in result.output or "|" in result.output
 
-    def test_streaming_table_handles_unicode(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_streaming_table_handles_unicode(self, api_key: str, host: str) -> None:
         """Test that streaming table format handles Unicode without crashing."""
         from click.testing import CliRunner
 
@@ -2381,12 +2618,17 @@ class TestUnicodeOutputHandling:
             [
                 "query",
                 "host:*.google.com",
-                "--index", "dns",
-                "--since-days", "1",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
                 "--stream",
-                "--format", "table",
-                "--api-key", api_key,
-                "--host", host,
+                "--format",
+                "table",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed without encoding error
@@ -2423,12 +2665,18 @@ class TestMarkersModeSeparation:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result1.exit_code == 0
@@ -2439,12 +2687,18 @@ class TestMarkersModeSeparation:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-p", prefix,
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-p",
+                prefix,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result2.exit_code == 0
@@ -2458,9 +2712,7 @@ class TestMarkersModeSeparation:
 class TestAlertResultsSinceFilter:
     """E2E tests for alerts results --since filter."""
 
-    def test_alerts_results_with_since_filter(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_alerts_results_with_since_filter(self, api_key: str, host: str) -> None:
         """Test alerts results with --since timestamp filter."""
         from click.testing import CliRunner
 
@@ -2477,6 +2729,7 @@ class TestAlertResultsSinceFilter:
 
         # Extract first alert ID from table output
         import re
+
         match = re.search(r"[│|]\s*(\d+)\s*[│|]", list_result.output)
         if not match:
             pytest.skip("Could not parse alert ID")
@@ -2487,20 +2740,24 @@ class TestAlertResultsSinceFilter:
         result = runner.invoke(
             main,
             [
-                "alerts", "results", alert_id,
-                "--since", "2025-01-01T00:00:00Z",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "results",
+                alert_id,
+                "--since",
+                "2025-01-01T00:00:00Z",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (may return empty array or results)
         assert result.exit_code == 0
         assert "[" in result.output or "No results" in result.output
 
-    def test_alerts_results_since_invalid_format(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_alerts_results_since_invalid_format(self, api_key: str, host: str) -> None:
         """Test alerts results with invalid --since timestamp format."""
         from click.testing import CliRunner
 
@@ -2517,6 +2774,7 @@ class TestAlertResultsSinceFilter:
 
         # Extract first alert ID from table output
         import re
+
         match = re.search(r"[│|]\s*(\d+)\s*[│|]", list_result.output)
         if not match:
             pytest.skip("Could not parse alert ID")
@@ -2527,11 +2785,17 @@ class TestAlertResultsSinceFilter:
         result = runner.invoke(
             main,
             [
-                "alerts", "results", alert_id,
-                "--since", "not-a-timestamp",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "results",
+                alert_id,
+                "--since",
+                "not-a-timestamp",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should either fail or handle gracefully
@@ -2544,9 +2808,7 @@ class TestVerboseModeStreaming:
 
     DATA_QUERY = "host:microsoft.com"
 
-    def test_verbose_streaming_shows_debug_output(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_verbose_streaming_shows_debug_output(self, api_key: str, host: str) -> None:
         """Test that verbose mode with streaming shows debug information."""
         from click.testing import CliRunner
 
@@ -2559,12 +2821,17 @@ class TestVerboseModeStreaming:
                 "-v",  # Verbose flag
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
                 "--stream",
-                "--format", "jsonl",
-                "--api-key", api_key,
-                "--host", host,
+                "--format",
+                "jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -2589,11 +2856,16 @@ class TestLargeSinceDaysValues:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "365",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "365",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (large lookback is valid)
@@ -2606,9 +2878,7 @@ class TestStreamingWithNoMarker:
 
     DATA_QUERY = "host:microsoft.com"
 
-    def test_streaming_no_marker_to_stdout(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_streaming_no_marker_to_stdout(self, api_key: str, host: str) -> None:
         """Test streaming with --no-marker outputs to stdout correctly."""
         from click.testing import CliRunner
 
@@ -2620,22 +2890,25 @@ class TestStreamingWithNoMarker:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
                 "--stream",
                 "--no-marker",
-                "--format", "jsonl",
-                "--api-key", api_key,
-                "--host", host,
+                "--format",
+                "jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
         # Should show streaming indicator and have JSONL output
         assert "Streaming" in result.output or "stream" in result.output.lower()
 
-    def test_streaming_no_marker_to_file(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_streaming_no_marker_to_file(self, api_key: str, host: str, tmp_path) -> None:
         """Test streaming with --no-marker writes to file without saving marker."""
         from click.testing import CliRunner
 
@@ -2651,13 +2924,18 @@ class TestStreamingWithNoMarker:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
                 "--stream",
                 "--no-marker",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -2695,12 +2973,18 @@ class TestMarkerSinceDaysInteraction:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result1.exit_code == 0
@@ -2713,12 +2997,18 @@ class TestMarkerSinceDaysInteraction:
             [
                 "query",
                 self.DATA_QUERY,
-                "--index", "dns",
-                "--since-days", "365",  # This should be ignored
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "365",  # This should be ignored
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result2.exit_code == 0
@@ -2742,8 +3032,16 @@ class TestHelpTextCompleteness:
 
         # Check all options are documented
         expected_options = [
-            "--index", "--media", "--format", "--output", "--output-prefix",
-            "--since-days", "--no-marker", "--stream", "--api-key", "--host"
+            "--index",
+            "--media",
+            "--format",
+            "--output",
+            "--output-prefix",
+            "--since-days",
+            "--no-marker",
+            "--stream",
+            "--api-key",
+            "--host",
         ]
         for opt in expected_options:
             assert opt in result.output, f"Option {opt} not documented in query help"
@@ -2819,12 +3117,12 @@ class TestAlertsListFormats:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["alerts", "list", "--owned", "--format", "json",
-             "--api-key", api_key, "--host", host],
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
         )
         assert result.exit_code == 0, f"Command failed: {result.output}"
         # Should be valid JSON array
         import json
+
         data = json.loads(result.output)
         assert isinstance(data, list)
         if data:  # If there are alerts
@@ -2841,13 +3139,23 @@ class TestAlertsListFormats:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["alerts", "list", "--owned", "--format", "jsonl",
-             "--api-key", api_key, "--host", host],
+            [
+                "alerts",
+                "list",
+                "--owned",
+                "--format",
+                "jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
         )
         assert result.exit_code == 0
         # Should be one JSON object per line
         import json
-        lines = [l for l in result.output.strip().split("\n") if l]
+
+        lines = [line for line in result.output.strip().split("\n") if line]
         if lines:
             for line in lines:
                 obj = json.loads(line)
@@ -2862,8 +3170,7 @@ class TestAlertsListFormats:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["alerts", "list", "--owned", "--format", "csv",
-             "--api-key", api_key, "--host", host],
+            ["alerts", "list", "--owned", "--format", "csv", "--api-key", api_key, "--host", host],
         )
         assert result.exit_code == 0
         # Should have header row
@@ -2882,14 +3189,25 @@ class TestAlertsListFormats:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            ["alerts", "list", "--owned", "--format", "json",
-             "-o", str(output_file),
-             "--api-key", api_key, "--host", host],
+            [
+                "alerts",
+                "list",
+                "--owned",
+                "--format",
+                "json",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
         )
         assert result.exit_code == 0
         assert output_file.exists()
 
         import json
+
         data = json.loads(output_file.read_text())
         assert isinstance(data, list)
 
@@ -2897,12 +3215,11 @@ class TestAlertsListFormats:
 class TestBacktestOutputPrefix:
     """E2E tests for alerts backtest --output-prefix option."""
 
-    def test_backtest_output_prefix_creates_file(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_backtest_output_prefix_creates_file(self, api_key: str, host: str, tmp_path) -> None:
         """Test that backtest with --output-prefix creates timestamped file."""
-        from click.testing import CliRunner
         import json
+
+        from click.testing import CliRunner
 
         from cetus.cli import main
 
@@ -2910,8 +3227,7 @@ class TestBacktestOutputPrefix:
         runner = CliRunner()
         list_result = runner.invoke(
             main,
-            ["alerts", "list", "--owned", "--format", "json",
-             "--api-key", api_key, "--host", host],
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
         )
         if list_result.exit_code != 0:
             pytest.skip(f"Could not list alerts: {list_result.output}")
@@ -2930,12 +3246,18 @@ class TestBacktestOutputPrefix:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", alert_id,
-                "-p", prefix,
-                "--since-days", "1",
+                "alerts",
+                "backtest",
+                alert_id,
+                "-p",
+                prefix,
+                "--since-days",
+                "1",
                 "--no-marker",  # Use --no-marker for consistent test behavior
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed (may have 0 results, but command should work)
@@ -2963,11 +3285,17 @@ class TestBacktestOutputPrefix:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", "1",
-                "-o", str(output_file),
-                "-p", prefix,
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                "1",
+                "-o",
+                str(output_file),
+                "-p",
+                prefix,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 1
@@ -2996,11 +3324,16 @@ class TestDSLQueries:
             [
                 "query",
                 dsl_query,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -3044,12 +3377,17 @@ class TestDSLQueries:
             [
                 "query",
                 dsl_query,
-                "--index", "dns",
-                "--since-days", "1",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
                 "--stream",
-                "--format", "jsonl",
-                "--api-key", api_key,
-                "--host", host,
+                "--format",
+                "jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -3080,8 +3418,7 @@ class TestBacktestTermsAlerts:
         runner = CliRunner()
         list_result = runner.invoke(
             main,
-            ["alerts", "list", "--owned", "--format", "json",
-             "--api-key", api_key, "--host", host],
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
         )
 
         if list_result.exit_code != 0:
@@ -3100,12 +3437,19 @@ class TestBacktestTermsAlerts:
         result = runner.invoke(
             main,
             [
-                "alerts", "backtest", alert_id,
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "alerts",
+                "backtest",
+                alert_id,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
 
@@ -3134,11 +3478,16 @@ class TestAPIKeyMasking:
                 "-v",  # Verbose mode
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
@@ -3156,9 +3505,7 @@ class TestMarkerFileCorruption:
     The client should handle corrupted marker files gracefully.
     """
 
-    def test_corrupted_marker_file_recovery(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_corrupted_marker_file_recovery(self, api_key: str, host: str, tmp_path) -> None:
         """Test that corrupted marker file is handled gracefully."""
         from click.testing import CliRunner
 
@@ -3180,12 +3527,18 @@ class TestMarkerFileCorruption:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-o", str(output_file),
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
 
@@ -3210,6 +3563,7 @@ class TestUserAgentHeader:
         assert __version__ in USER_AGENT
         # Should also include Python version and platform
         import platform
+
         assert platform.python_version() in USER_AGENT
         assert platform.system() in USER_AGENT
 
@@ -3220,9 +3574,7 @@ class TestTimeoutBehavior:
     The client should respect timeout settings and fail gracefully.
     """
 
-    def test_very_short_timeout_fails_gracefully(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_very_short_timeout_fails_gracefully(self, api_key: str, host: str) -> None:
         """Test that very short timeout produces a clean error."""
         from click.testing import CliRunner
 
@@ -3235,11 +3587,16 @@ class TestTimeoutBehavior:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should fail with timeout or connection error (not crash)
@@ -3271,10 +3628,14 @@ class TestConfigEnvironmentVariables:
                 "-v",  # Verbose to see the query
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         # Should succeed and use the env var for since-days
@@ -3287,9 +3648,7 @@ class TestQueryResultCount:
     Tests that the CLI correctly reports the number of records returned.
     """
 
-    def test_buffered_query_reports_count(
-        self, api_key: str, host: str
-    ) -> None:
+    def test_buffered_query_reports_count(self, api_key: str, host: str) -> None:
         """Test that buffered query reports total record count."""
         from click.testing import CliRunner
 
@@ -3301,20 +3660,23 @@ class TestQueryResultCount:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "json",
-                "--api-key", api_key,
-                "--host", host,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0
         # Should report count in output (e.g., "130 records in 2.5s")
         assert "record" in result.output.lower()
 
-    def test_file_output_reports_wrote_count(
-        self, api_key: str, host: str, tmp_path
-    ) -> None:
+    def test_file_output_reports_wrote_count(self, api_key: str, host: str, tmp_path) -> None:
         """Test that file output reports 'Wrote X records'."""
         from click.testing import CliRunner
 
@@ -3328,13 +3690,19 @@ class TestQueryResultCount:
             [
                 "query",
                 "host:microsoft.com",
-                "--index", "dns",
-                "--since-days", "1",
-                "--format", "jsonl",
-                "-o", str(output_file),
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
                 "--no-marker",
-                "--api-key", api_key,
-                "--host", host,
+                "--api-key",
+                api_key,
+                "--host",
+                host,
             ],
         )
         assert result.exit_code == 0

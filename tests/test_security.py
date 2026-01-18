@@ -12,15 +12,11 @@ These tests verify the security fixes implemented for the 0.0.1 release:
 
 from __future__ import annotations
 
-import json
 import logging
-import stat
 import sys
 import time
 from pathlib import Path
-from unittest.mock import patch
 
-import httpx
 import pytest
 
 from cetus.client import (
@@ -30,7 +26,7 @@ from cetus.client import (
     VALID_MEDIA,
     CetusClient,
 )
-from cetus.config import Config, _set_secure_permissions, get_config_file
+from cetus.config import Config, _set_secure_permissions
 from cetus.exceptions import APIError, ConfigurationError
 from cetus.markers import MAX_MARKER_FILE_SIZE, MarkerStore, _query_hash
 
@@ -202,7 +198,7 @@ class TestMarkerFileSizeLimit:
         store = MarkerStore(markers_dir=markers_dir)
 
         # Save a normal marker
-        marker = store.save("test", "dns", "2025-01-01T00:00:00Z", "uuid")
+        store.save("test", "dns", "2025-01-01T00:00:00Z", "uuid")
 
         # Should be retrievable
         result = store.get("test", "dns")

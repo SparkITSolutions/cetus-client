@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cetus.client import CetusClient, QueryResult
-from cetus.exceptions import APIError, AuthenticationError, ConnectionError
-from cetus.markers import Marker
+from cetus.exceptions import AuthenticationError
 
 
 class TestQueryAsync:
@@ -23,9 +22,7 @@ class TestQueryAsync:
             method="POST",
             url="http://localhost/api/query/",
             json={
-                "data": [
-                    {"uuid": "1", "host": "a.com", "dns_timestamp": "2025-01-01T00:00:00Z"}
-                ],
+                "data": [{"uuid": "1", "host": "a.com", "dns_timestamp": "2025-01-01T00:00:00Z"}],
                 "has_more": False,
                 "pit_id": "pit123",
             },
@@ -149,9 +146,7 @@ class TestFetchPageAsync:
         )
 
         async with httpx_lib.AsyncClient(timeout=60) as async_client:
-            result = await client._fetch_page_async(
-                async_client, "host:*", "dns", "nvme"
-            )
+            result = await client._fetch_page_async(async_client, "host:*", "dns", "nvme")
 
         assert result == {"data": [], "has_more": False}
         client.close()
@@ -193,9 +188,7 @@ class TestFetchPageAsync:
         )
 
         async with httpx_lib.AsyncClient(timeout=60) as async_client:
-            result = await client._fetch_page_async(
-                async_client, "host:*", "dns", "nvme"
-            )
+            result = await client._fetch_page_async(async_client, "host:*", "dns", "nvme")
 
         assert result["data"] == [{"id": 1}]
         assert len(httpx_mock.get_requests()) == 2
@@ -294,6 +287,7 @@ class TestUserAgentHeader:
         assert "User-Agent" in request.headers
         user_agent = request.headers["User-Agent"]
         from cetus import __version__
+
         assert f"cetus-client/{__version__}" in user_agent
         assert "Python" in user_agent
         client.close()

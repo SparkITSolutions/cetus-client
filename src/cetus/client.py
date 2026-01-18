@@ -200,7 +200,7 @@ class CetusClient:
         import json
 
         stripped = query.strip()
-        if not stripped.startswith('{'):
+        if not stripped.startswith("{"):
             return False
         try:
             parsed = json.loads(stripped)
@@ -266,9 +266,7 @@ class CetusClient:
             wrapped_query = {
                 "bool": {
                     "must": [parsed_query],
-                    "filter": [
-                        {"range": {timestamp_field: {"gte": time_value}}}
-                    ]
+                    "filter": [{"range": {timestamp_field: {"gte": time_value}}}],
                 }
             }
             return json.dumps(wrapped_query)

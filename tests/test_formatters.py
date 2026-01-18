@@ -73,9 +73,7 @@ class TestJSONFormatter:
         result = formatter.format(sample_data)
         assert "    " in result  # 4-space indent
 
-    def test_format_stream_writes_to_file(
-        self, formatter: JSONFormatter, sample_data: list[dict]
-    ):
+    def test_format_stream_writes_to_file(self, formatter: JSONFormatter, sample_data: list[dict]):
         """format_stream should write JSON to file object."""
         output = io.StringIO()
         count = formatter.format_stream(sample_data, output)
@@ -359,10 +357,20 @@ class TestTableFormatter:
 
     def test_limits_columns(self, formatter: TableFormatter):
         """Table should limit number of columns."""
-        data = [{
-            "f1": 1, "f2": 2, "f3": 3, "f4": 4, "f5": 5,
-            "f6": 6, "f7": 7, "f8": 8, "f9": 9, "f10": 10,
-        }]
+        data = [
+            {
+                "f1": 1,
+                "f2": 2,
+                "f3": 3,
+                "f4": 4,
+                "f5": 5,
+                "f6": 6,
+                "f7": 7,
+                "f8": 8,
+                "f9": 9,
+                "f10": 10,
+            }
+        ]
         result = formatter.format(data)
         # Should only show up to 8 columns
         # Count occurrences of column values is tricky, but format should work

@@ -216,7 +216,9 @@ class TestQueryCommand:
         return QueryResult(
             data=[
                 {
-                    "uuid": "1", "host": "example.com", "A": "1.1.1.1",
+                    "uuid": "1",
+                    "host": "example.com",
+                    "A": "1.1.1.1",
                     "dns_timestamp": "2025-01-01T00:00:00Z",
                 }
             ],
@@ -439,9 +441,7 @@ class TestErrorHandling:
 class TestCLIIntegration:
     """Integration tests for CLI commands."""
 
-    def test_full_workflow_config_then_query(
-        self, runner: CliRunner, tmp_path: Path
-    ):
+    def test_full_workflow_config_then_query(self, runner: CliRunner, tmp_path: Path):
         """Test setting config then using it in query."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
@@ -504,8 +504,18 @@ class TestIncrementalQueryAppend:
         """First batch of query results."""
         return QueryResult(
             data=[
-                {"uuid": "1", "host": "a.example.com", "A": "1.1.1.1", "dns_timestamp": "2025-01-01T00:00:00Z"},
-                {"uuid": "2", "host": "b.example.com", "A": "2.2.2.2", "dns_timestamp": "2025-01-01T01:00:00Z"},
+                {
+                    "uuid": "1",
+                    "host": "a.example.com",
+                    "A": "1.1.1.1",
+                    "dns_timestamp": "2025-01-01T00:00:00Z",
+                },
+                {
+                    "uuid": "2",
+                    "host": "b.example.com",
+                    "A": "2.2.2.2",
+                    "dns_timestamp": "2025-01-01T01:00:00Z",
+                },
             ],
             total_fetched=2,
             last_uuid="2",
@@ -518,7 +528,12 @@ class TestIncrementalQueryAppend:
         """Second batch of query results (new records)."""
         return QueryResult(
             data=[
-                {"uuid": "3", "host": "c.example.com", "A": "3.3.3.3", "dns_timestamp": "2025-01-02T00:00:00Z"},
+                {
+                    "uuid": "3",
+                    "host": "c.example.com",
+                    "A": "3.3.3.3",
+                    "dns_timestamp": "2025-01-02T00:00:00Z",
+                },
             ],
             total_fetched=1,
             last_uuid="3",
@@ -563,10 +578,19 @@ class TestIncrementalQueryAppend:
         ):
             # First run - write initial data
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "jsonl",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
 
             # Verify file has initial data
@@ -578,10 +602,19 @@ class TestIncrementalQueryAppend:
 
             # Second run with 0 results - file should be unchanged
             with patch("cetus.client.CetusClient.query_async", mock_query_async_empty):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "jsonl",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
                 assert "No new records" in result.output or "unchanged" in result.output
 
@@ -615,18 +648,36 @@ class TestIncrementalQueryAppend:
         ):
             # First run
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "jsonl",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
 
             # Second run with new data
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "jsonl",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
                 assert "Appended" in result.output
 
@@ -664,18 +715,36 @@ class TestIncrementalQueryAppend:
         ):
             # First run
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "csv",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "csv",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
 
             # Second run
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "csv",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "csv",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
 
             # Verify only one header row
@@ -716,10 +785,19 @@ class TestIncrementalQueryAppend:
         ):
             # First run
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "json",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "json",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
 
             # Verify initial state
@@ -728,10 +806,19 @@ class TestIncrementalQueryAppend:
 
             # Second run
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "json",
-                    "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "json",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
 
             # Verify merged array
@@ -768,18 +855,38 @@ class TestIncrementalQueryAppend:
         ):
             # First run
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch1):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
-                    "--no-marker", "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "jsonl",
+                        "--no-marker",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
 
             # Second run with --no-marker should overwrite
             with patch("cetus.client.CetusClient.query_async", mock_query_async_batch2):
-                result = runner.invoke(main, [
-                    "query", "host:*", "-o", str(output_file), "--format", "jsonl",
-                    "--no-marker", "--api-key", "test-key"
-                ])
+                result = runner.invoke(
+                    main,
+                    [
+                        "query",
+                        "host:*",
+                        "-o",
+                        str(output_file),
+                        "--format",
+                        "jsonl",
+                        "--no-marker",
+                        "--api-key",
+                        "test-key",
+                    ],
+                )
                 assert result.exit_code == 0
                 assert "Wrote" in result.output  # Not "Appended"
 
@@ -800,8 +907,18 @@ class TestOutputPrefix:
         """Sample query results."""
         return QueryResult(
             data=[
-                {"uuid": "1", "host": "a.example.com", "A": "1.1.1.1", "dns_timestamp": "2025-01-01T00:00:00Z"},
-                {"uuid": "2", "host": "b.example.com", "A": "2.2.2.2", "dns_timestamp": "2025-01-01T01:00:00Z"},
+                {
+                    "uuid": "1",
+                    "host": "a.example.com",
+                    "A": "1.1.1.1",
+                    "dns_timestamp": "2025-01-01T00:00:00Z",
+                },
+                {
+                    "uuid": "2",
+                    "host": "b.example.com",
+                    "A": "2.2.2.2",
+                    "dns_timestamp": "2025-01-01T01:00:00Z",
+                },
             ],
             total_fetched=2,
             last_uuid="2",
@@ -841,10 +958,10 @@ class TestOutputPrefix:
             patch("cetus.config.get_data_dir", return_value=data_dir),
             patch("cetus.client.CetusClient.query_async", mock_query_async),
         ):
-            result = runner.invoke(main, [
-                "query", "host:*", "-p", prefix, "--format", "jsonl",
-                "--api-key", "test-key"
-            ])
+            result = runner.invoke(
+                main,
+                ["query", "host:*", "-p", prefix, "--format", "jsonl", "--api-key", "test-key"],
+            )
             assert result.exit_code == 0
             assert "Wrote 2 records" in result.output
 
@@ -880,10 +997,10 @@ class TestOutputPrefix:
             patch("cetus.config.get_data_dir", return_value=data_dir),
             patch("cetus.client.CetusClient.query_async", mock_query_async),
         ):
-            result = runner.invoke(main, [
-                "query", "host:*", "-p", prefix, "--format", "jsonl",
-                "--api-key", "test-key"
-            ])
+            result = runner.invoke(
+                main,
+                ["query", "host:*", "-p", prefix, "--format", "jsonl", "--api-key", "test-key"],
+            )
             assert result.exit_code == 0
             assert "No new records" in result.output
 
@@ -915,10 +1032,10 @@ class TestOutputPrefix:
             patch("cetus.markers.get_markers_dir", return_value=markers_dir),
             patch("cetus.client.CetusClient.query_async", mock_query_async),
         ):
-            result = runner.invoke(main, [
-                "query", "host:*", "-p", prefix, "--format", "jsonl",
-                "--api-key", "test-key"
-            ])
+            result = runner.invoke(
+                main,
+                ["query", "host:*", "-p", prefix, "--format", "jsonl", "--api-key", "test-key"],
+            )
             assert result.exit_code == 0
 
             # Check that a marker was saved
@@ -946,10 +1063,9 @@ class TestOutputPrefix:
             patch("cetus.config.get_data_dir", return_value=data_dir),
             patch("cetus.client.CetusClient.query_async", mock_query_async),
         ):
-            result = runner.invoke(main, [
-                "query", "host:*", "-p", prefix, "--format", "csv",
-                "--api-key", "test-key"
-            ])
+            result = runner.invoke(
+                main, ["query", "host:*", "-p", prefix, "--format", "csv", "--api-key", "test-key"]
+            )
             assert result.exit_code == 0
 
             # Check CSV extension
@@ -965,10 +1081,9 @@ class TestOutputPrefix:
         output_file = tmp_path / "results.jsonl"
         prefix = str(tmp_path / "results")
 
-        result = runner.invoke(main, [
-            "query", "host:*", "-o", str(output_file), "-p", prefix,
-            "--api-key", "test-key"
-        ])
+        result = runner.invoke(
+            main, ["query", "host:*", "-o", str(output_file), "-p", prefix, "--api-key", "test-key"]
+        )
         assert result.exit_code == 1
         assert "mutually exclusive" in result.output
 
@@ -1004,10 +1119,19 @@ class TestOutputDirectoryErrorHandling:
             patch("cetus.config.get_data_dir", return_value=data_dir),
             patch("cetus.client.CetusClient.query_async", mock_query_async),
         ):
-            result = runner.invoke(main, [
-                "query", "host:*", "-o", str(nonexistent_dir), "--format", "json",
-                "--api-key", "test-key"
-            ])
+            result = runner.invoke(
+                main,
+                [
+                    "query",
+                    "host:*",
+                    "-o",
+                    str(nonexistent_dir),
+                    "--format",
+                    "json",
+                    "--api-key",
+                    "test-key",
+                ],
+            )
 
         # Should fail with exit code 1
         assert result.exit_code == 1
@@ -1015,4 +1139,4 @@ class TestOutputDirectoryErrorHandling:
         assert "Error" in result.output or "error" in result.output.lower()
         # Should NOT have Python traceback
         assert "Traceback" not in result.output
-        assert "File \"" not in result.output
+        assert 'File "' not in result.output

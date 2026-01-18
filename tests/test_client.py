@@ -406,9 +406,7 @@ class TestCetusClientFetchPage:
             client._fetch_page("host:*", "dns", "nvme")
         client.close()
 
-    def test_fetch_page_raises_connection_error_on_timeout(
-        self, client: CetusClient, httpx_mock
-    ):
+    def test_fetch_page_raises_connection_error_on_timeout(self, client: CetusClient, httpx_mock):
         """_fetch_page should raise ConnectionError on timeout."""
         httpx_mock.add_exception(
             httpx.TimeoutException("Timeout"),
@@ -434,9 +432,7 @@ class TestCetusClientQuery:
             method="POST",
             url="http://localhost/api/query/",
             json={
-                "data": [
-                    {"uuid": "1", "host": "a.com", "dns_timestamp": "2025-01-01T00:00:00Z"}
-                ],
+                "data": [{"uuid": "1", "host": "a.com", "dns_timestamp": "2025-01-01T00:00:00Z"}],
                 "has_more": False,
             },
         )
