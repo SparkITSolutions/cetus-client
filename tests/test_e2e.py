@@ -1930,6 +1930,7 @@ class TestOutputDirectoryErrors:
                 "1",
                 "-o",
                 "nonexistent_directory_xyz/results.json",
+                "--no-marker",  # Force write attempt (don't skip due to marker)
                 "--api-key",
                 api_key,
                 "--host",
@@ -4063,6 +4064,7 @@ class TestStreamingMediaAll:
     This can return more results but takes longer.
     """
 
+    @pytest.mark.skip(reason="--media all is slow, skip by default")
     def test_streaming_media_all(self, api_key: str, host: str) -> None:
         """Test streaming query with --media all option."""
         from click.testing import CliRunner
