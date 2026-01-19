@@ -251,10 +251,7 @@ class TestConfigLoadFromFile:
         """Config should be loaded from TOML file."""
         config_file = config_dir / "config.toml"
         config_file.write_text(
-            'api_key = "file-api-key"\n'
-            'host = "file.example.com"\n'
-            "timeout = 45\n"
-            "since_days = 14\n"
+            'api_key = "file-api-key"\nhost = "file.example.com"\ntimeout = 45\nsince_days = 14\n'
         )
 
         with patch("cetus.config.get_config_dir", return_value=config_dir):
@@ -350,10 +347,7 @@ class TestConfigPriority:
         # Set up file
         config_file = config_dir / "config.toml"
         config_file.write_text(
-            'api_key = "file-key"\n'
-            'host = "file.com"\n'
-            "timeout = 10\n"
-            "since_days = 10\n"
+            'api_key = "file-key"\nhost = "file.com"\ntimeout = 10\nsince_days = 10\n'
         )
 
         # Set up env (overrides some file values)
