@@ -18,7 +18,7 @@ Query optimization:
 - Uses since_days=7 (same speed as 1 day for targeted queries)
 - Streaming tests break early after a few records
 
-Test categories (122 total):
+Test categories (134 total):
 - Query endpoints: 4 tests (dns, certstream, alerting indices, invalid index)
 - Streaming: 2 tests
 - Alerts API: 2 tests
@@ -79,6 +79,11 @@ Test categories (122 total):
 - Output prefix with --no-marker: 1 test
 - Streaming with --media all: 1 test
 - Backtest streaming with output prefix: 1 test
+- Table format incremental append: 1 test (warning when table can't append)
+- Backtest verbose mode: 1 test (shows alert details with -v)
+- Shared alert operations: 2 tests (results and backtest on shared alerts)
+- Config forward compatibility: 2 tests (unknown keys, empty values)
+- Lucene query operators: 6 tests (AND, OR, NOT, wildcard suffix, quoted, grouping)
 """
 
 from __future__ import annotations
@@ -4154,3 +4159,507 @@ class TestBacktestStreamingWithOutputPrefix:
         assert result.exit_code == 0
         # May or may not create file depending on results
         # But should not crash
+
+
+class TestTableFormatIncrementalAppendWarning:
+    """E2E tests for table format warning when used with incremental mode."""
+
+    DATA_QUERY = "host:microsoft.com"
+
+    def test_table_format_append_shows_warning(self, api_key: str, host: str, tmp_path) -> None:
+        """Test that table format with existing file shows cannot-append warning.
+
+        Table format cannot truly append to an existing file (Rich tables
+        require full content to calculate column widths). When used in
+        incremental mode with an existing file, a warning should be shown.
+        """
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        output_file = tmp_path / "results.txt"
+
+        # First run - create initial file with table format
+        # Use longer lookback to ensure we get results
+        result1 = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "-o",
+                str(output_file),
+                "--format",
+                "table",
+                "--no-marker",  # Don't save marker, we'll test append behavior manually
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result1.exit_code == 0
+
+        # If no results were found, we can't test the append warning
+        if not output_file.exists() or output_file.stat().st_size == 0:
+            pytest.skip("No results found to test table append warning")
+
+        initial_size = output_file.stat().st_size
+
+        # Create a marker file manually to trigger incremental mode
+        from cetus.markers import MarkerStore
+
+        marker_store = MarkerStore()
+        # Save marker from a past timestamp to ensure second run has "new" data
+        marker_store.save(
+            query=self.DATA_QUERY,
+            index="dns",
+            last_timestamp="2020-01-01T00:00:00Z",
+            last_uuid="test-uuid",
+            mode="file",
+        )
+
+        # Second run - incremental mode with marker, existing file should trigger warning
+        result2 = runner.invoke(
+            main,
+            [
+                "query",
+                self.DATA_QUERY,
+                "--index",
+                "dns",
+                "--since-days",
+                "7",
+                "-o",
+                str(output_file),
+                "--format",
+                "table",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result2.exit_code == 0
+
+        # Should show the warning about table format not being able to append
+        # Note: The warning appears in stderr which Click captures in output
+        assert "table format cannot append" in result2.output or "Warning" in result2.output
+
+        # Clean up marker
+        marker_store.clear("dns")
+
+
+class TestBacktestVerboseMode:
+    """E2E tests for backtest command verbose output."""
+
+    def test_backtest_verbose_shows_alert_details(self, api_key: str, host: str) -> None:
+        """Test that verbose mode with backtest shows alert title and query.
+
+        When running backtest with -v flag, it should display:
+        - The alert title
+        - The query being executed
+        """
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+
+        # First get an alert ID
+        list_result = runner.invoke(
+            main,
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
+        )
+        if list_result.exit_code != 0:
+            pytest.skip("Could not list alerts")
+
+        import json
+
+        try:
+            alerts = json.loads(list_result.output)
+        except json.JSONDecodeError:
+            pytest.skip("Could not parse alerts list")
+
+        if not alerts:
+            pytest.skip("No owned alerts to test with")
+
+        # Find an alert with a query
+        alert = None
+        for a in alerts:
+            if a.get("query_preview"):
+                alert = a
+                break
+
+        if not alert:
+            pytest.skip("No alerts with query_preview found")
+
+        alert_id = str(alert["id"])
+
+        # Run backtest with verbose mode
+        result = runner.invoke(
+            main,
+            [
+                "-v",  # Verbose flag before subcommand
+                "alerts",
+                "backtest",
+                alert_id,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+
+        # Should succeed
+        assert result.exit_code == 0
+
+        # Verbose output should show alert details
+        # The exact format is: "Backtesting alert: {title}" and "Query: {query}"
+        assert "Backtesting alert" in result.output or "Query:" in result.output
+
+
+class TestSharedAlertOperations:
+    """E2E tests for operations on shared alerts.
+
+    Tests that users can access results and backtest alerts that have been
+    shared with them but which they don't own.
+    """
+
+    def test_alert_results_for_shared_alert(self, api_key: str, host: str) -> None:
+        """Test that alert results can be retrieved for a shared alert."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+
+        # First, find a shared alert
+        list_result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "list",
+                "--shared",
+                "--no-owned",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        if list_result.exit_code != 0:
+            pytest.skip("Could not list shared alerts")
+
+        import json
+
+        try:
+            alerts = json.loads(list_result.output)
+        except json.JSONDecodeError:
+            pytest.skip("Could not parse shared alerts list")
+
+        if not alerts:
+            pytest.skip("No shared alerts to test with")
+
+        alert_id = str(alerts[0]["id"])
+
+        # Get results for the shared alert
+        result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "results",
+                alert_id,
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+
+        # Should succeed (even if no results, should not error on permissions)
+        assert result.exit_code == 0
+        # Output should be valid JSON (empty array or array of results)
+        output = result.output.strip()
+        if output:
+            # Remove any status messages before JSON
+            if "[" in output:
+                json_start = output.index("[")
+                json_output = output[json_start:]
+                data = json.loads(json_output)
+                assert isinstance(data, list)
+
+    def test_backtest_shared_alert_access(self, api_key: str, host: str) -> None:
+        """Test that backtest works on alerts shared with the user."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+
+        # First, find a shared alert
+        list_result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "list",
+                "--shared",
+                "--no-owned",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        if list_result.exit_code != 0:
+            pytest.skip("Could not list shared alerts")
+
+        import json
+
+        try:
+            alerts = json.loads(list_result.output)
+        except json.JSONDecodeError:
+            pytest.skip("Could not parse shared alerts list")
+
+        if not alerts:
+            pytest.skip("No shared alerts to test with")
+
+        alert_id = str(alerts[0]["id"])
+
+        # Run backtest with a very short time window to avoid timeout
+        result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "backtest",
+                alert_id,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+            catch_exceptions=False,
+        )
+
+        # Should either succeed or timeout - but not fail with permission error
+        # We check that it doesn't fail with "permission" or "not found" errors
+        output_lower = result.output.lower()
+        assert "permission denied" not in output_lower
+        assert "not allowed" not in output_lower
+        # Note: timeout is acceptable for complex shared alerts
+
+
+class TestConfigForwardCompatibility:
+    """E2E tests for config forward compatibility.
+
+    Tests that unknown keys in config files are handled gracefully,
+    allowing older clients to work with config files from newer versions.
+    """
+
+    def test_config_with_unknown_keys_handled_gracefully(self, tmp_path) -> None:
+        """Test that config files with unknown keys don't cause errors."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Create a config file with unknown keys (simulating future version)
+        config_file = config_dir / "config.toml"
+        config_file.write_text(
+            'api_key = "test-key"\n'
+            'host = "custom.example.com"\n'
+            "timeout = 30\n"
+            "since_days = 14\n"
+            "# Unknown keys from future version\n"
+            'new_feature_flag = true\n'
+            'experimental_mode = "beta"\n'
+            "max_retries = 5\n"
+        )
+
+        with patch("cetus.config.get_config_dir", return_value=config_dir):
+            runner = CliRunner()
+            result = runner.invoke(main, ["config", "show"])
+
+        # Should work without error
+        assert result.exit_code == 0
+        # Should show the known settings
+        assert "custom.example.com" in result.output or "host" in result.output.lower()
+        # Should not show Python traceback
+        assert "Traceback" not in result.output
+
+    def test_config_with_empty_values(self, tmp_path) -> None:
+        """Test that config files with empty string values are handled."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Create a config file with empty values
+        config_file = config_dir / "config.toml"
+        config_file.write_text(
+            'api_key = ""\n'  # Empty API key
+            'host = ""\n'  # Empty host
+        )
+
+        with patch("cetus.config.get_config_dir", return_value=config_dir):
+            runner = CliRunner()
+            result = runner.invoke(main, ["config", "show"])
+
+        # Should handle gracefully - either use defaults or show empty
+        # Main thing is no crash/traceback
+        assert "Traceback" not in result.output
+
+
+class TestQueryLuceneOperators:
+    """E2E tests for complex Lucene query syntax.
+
+    Tests that various Lucene operators are handled correctly.
+    """
+
+    DATA_QUERY = "host:microsoft.com"
+
+    def test_query_with_and_operator(self, api_key: str, host: str) -> None:
+        """Test query with explicit AND operator."""
+        from cetus.client import CetusClient
+
+        client = CetusClient(api_key=api_key, host=host, timeout=60)
+        try:
+            result = client.query(
+                search="host:microsoft.com AND A:*",
+                index="dns",
+                media="nvme",
+                since_days=1,
+                marker=None,
+            )
+            assert result is not None
+            assert isinstance(result.data, list)
+        finally:
+            client.close()
+
+    def test_query_with_or_operator(self, api_key: str, host: str) -> None:
+        """Test query with OR operator."""
+        from cetus.client import CetusClient
+
+        client = CetusClient(api_key=api_key, host=host, timeout=60)
+        try:
+            result = client.query(
+                search="host:microsoft.com OR host:google.com",
+                index="dns",
+                media="nvme",
+                since_days=1,
+                marker=None,
+            )
+            assert result is not None
+            assert isinstance(result.data, list)
+        finally:
+            client.close()
+
+    def test_query_with_not_operator(self, api_key: str, host: str) -> None:
+        """Test query with NOT operator."""
+        from cetus.client import CetusClient
+
+        client = CetusClient(api_key=api_key, host=host, timeout=60)
+        try:
+            result = client.query(
+                search="host:microsoft.com AND NOT A:1.1.1.1",
+                index="dns",
+                media="nvme",
+                since_days=1,
+                marker=None,
+            )
+            assert result is not None
+            assert isinstance(result.data, list)
+        finally:
+            client.close()
+
+    def test_query_with_wildcard_suffix(self, api_key: str, host: str) -> None:
+        """Test query with wildcard suffix match (trailing wildcard is fast)."""
+        from cetus.client import CetusClient
+
+        # Note: Leading wildcards (*.example.com) are slow as they scan all data.
+        # Trailing wildcards (example.*) use the index efficiently.
+        client = CetusClient(api_key=api_key, host=host, timeout=60)
+        try:
+            result = client.query(
+                search="host:microsoft.*",
+                index="dns",
+                media="nvme",
+                since_days=1,
+                marker=None,
+            )
+            assert result is not None
+            assert isinstance(result.data, list)
+        finally:
+            client.close()
+
+    def test_query_with_quoted_phrase(self, api_key: str, host: str) -> None:
+        """Test query with quoted exact phrase."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                'host:"www.microsoft.com"',
+                "--index",
+                "dns",
+                "--since-days",
+                "3",
+                "--format",
+                "json",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        # Should execute without error
+        assert result.exit_code == 0
+
+    def test_query_with_field_grouping(self, api_key: str, host: str) -> None:
+        """Test query with field grouping using parentheses."""
+        from cetus.client import CetusClient
+
+        client = CetusClient(api_key=api_key, host=host, timeout=60)
+        try:
+            result = client.query(
+                search="(host:microsoft.com OR host:azure.com) AND A:*",
+                index="dns",
+                media="nvme",
+                since_days=1,
+                marker=None,
+            )
+            assert result is not None
+            assert isinstance(result.data, list)
+        finally:
+            client.close()
