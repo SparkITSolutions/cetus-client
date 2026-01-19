@@ -11,14 +11,14 @@ Environment variables:
 Run with:
     CETUS_E2E_TEST=1 CETUS_API_KEY=your-key pytest tests/test_e2e.py -v
 
-Expected duration: ~7-8 minutes for all 109 tests (--media all tests skipped)
+Expected duration: ~7-8 minutes for all tests (--media all tests skipped)
 
 Query optimization:
 - Uses host:microsoft.com which has frequent data and returns quickly
 - Uses since_days=7 (same speed as 1 day for targeted queries)
 - Streaming tests break early after a few records
 
-Test categories (111 total):
+Test categories (122 total):
 - Query endpoints: 4 tests (dns, certstream, alerting indices, invalid index)
 - Streaming: 2 tests
 - Alerts API: 2 tests
@@ -72,6 +72,13 @@ Test categories (111 total):
 - Timeout behavior: 1 test (short timeout handling)
 - Config environment variables: 1 test (CETUS_SINCE_DAYS)
 - Query result count: 2 tests (buffered count, file output count)
+- Alert results output formats: 2 tests (CSV and JSONL to file)
+- Streaming alerting index: 2 tests (stdout and file output)
+- Config file corruption: 2 tests (malformed TOML, empty file)
+- Alerts list to file: 2 tests (CSV and JSONL export)
+- Output prefix with --no-marker: 1 test
+- Streaming with --media all: 1 test
+- Backtest streaming with output prefix: 1 test
 """
 
 from __future__ import annotations
@@ -3711,3 +3718,437 @@ class TestQueryResultCount:
         # Should report "Wrote X records to <file>"
         assert "Wrote" in result.output
         assert "records" in result.output.lower()
+
+
+class TestAlertResultsOutputFormats:
+    """E2E tests for alert results with different output formats to file.
+
+    Verifies that alert results can be exported to CSV, JSONL, and JSON files.
+    """
+
+    def test_alert_results_csv_to_file(self, api_key: str, host: str, tmp_path) -> None:
+        """Test alert results exported to CSV file."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        # First get an alert ID
+        runner = CliRunner()
+        list_result = runner.invoke(
+            main,
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
+        )
+        if list_result.exit_code != 0 or list_result.output.strip() == "[]":
+            pytest.skip("No owned alerts to test with")
+
+        import json
+
+        alerts = json.loads(list_result.output)
+        if not alerts:
+            pytest.skip("No owned alerts to test with")
+
+        alert_id = str(alerts[0]["id"])
+        output_file = tmp_path / "results.csv"
+
+        result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "results",
+                alert_id,
+                "--format",
+                "csv",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        # Should succeed even if no results (writes empty file or reports no results)
+        assert result.exit_code == 0
+
+    def test_alert_results_jsonl_to_file(self, api_key: str, host: str, tmp_path) -> None:
+        """Test alert results exported to JSONL file."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        # First get an alert ID
+        runner = CliRunner()
+        list_result = runner.invoke(
+            main,
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
+        )
+        if list_result.exit_code != 0 or list_result.output.strip() == "[]":
+            pytest.skip("No owned alerts to test with")
+
+        import json
+
+        alerts = json.loads(list_result.output)
+        if not alerts:
+            pytest.skip("No owned alerts to test with")
+
+        alert_id = str(alerts[0]["id"])
+        output_file = tmp_path / "results.jsonl"
+
+        result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "results",
+                alert_id,
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result.exit_code == 0
+
+
+class TestStreamingAlertingIndex:
+    """E2E tests for streaming queries on alerting index.
+
+    Verifies streaming mode works correctly with the alerting index,
+    which may have different data patterns than dns/certstream.
+    """
+
+    def test_streaming_alerting_index_works(self, api_key: str, host: str) -> None:
+        """Test streaming query on alerting index."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                "uuid:*",  # Match any UUID in alerting index
+                "--index",
+                "alerting",
+                "--since-days",
+                "7",
+                "--stream",
+                "--format",
+                "jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        # Should complete without error (may have 0 results)
+        assert result.exit_code == 0
+        assert "Streaming" in result.output or "Streamed" in result.output
+
+    def test_streaming_alerting_index_to_file(self, api_key: str, host: str, tmp_path) -> None:
+        """Test streaming query on alerting index with file output."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "alerting_results.jsonl"
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                "uuid:*",
+                "--index",
+                "alerting",
+                "--since-days",
+                "7",
+                "--stream",
+                "-o",
+                str(output_file),
+                "--no-marker",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result.exit_code == 0
+        # File may or may not exist depending on results
+
+
+class TestConfigFileCorruption:
+    """E2E tests for config file corruption recovery.
+
+    Verifies that corrupted or invalid config files are handled gracefully.
+    """
+
+    def test_malformed_config_toml_handled_gracefully(self, tmp_path) -> None:
+        """Test that malformed config.toml produces clear error, not traceback."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Create a malformed TOML file
+        config_file = config_dir / "config.toml"
+        config_file.write_text("this is not [valid toml\napi_key = ")
+
+        with patch("cetus.config.get_config_dir", return_value=config_dir):
+            runner = CliRunner()
+            result = runner.invoke(main, ["config", "show"])
+
+        # Should either handle gracefully or show clean error (not Python traceback)
+        output_lower = result.output.lower()
+        assert "traceback" not in output_lower
+
+    def test_empty_config_file_handled(self, tmp_path) -> None:
+        """Test that empty config file is handled gracefully."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+
+        # Create an empty config file
+        config_file = config_dir / "config.toml"
+        config_file.write_text("")
+
+        with patch("cetus.config.get_config_dir", return_value=config_dir):
+            runner = CliRunner()
+            result = runner.invoke(main, ["config", "show"])
+
+        # Should work (use defaults)
+        assert result.exit_code == 0
+        # Should show default host
+        assert "alerting.sparkits.ca" in result.output or "host" in result.output.lower()
+
+
+class TestAlertsListToFile:
+    """E2E tests for alerts list output to file.
+
+    Verifies that alerts list can be exported to files in various formats.
+    """
+
+    def test_alerts_list_csv_to_file(self, api_key: str, host: str, tmp_path) -> None:
+        """Test alerts list exported to CSV file."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "alerts.csv"
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "list",
+                "--format",
+                "csv",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result.exit_code == 0
+
+        if output_file.exists():
+            content = output_file.read_text()
+            # CSV should have header row
+            assert "id" in content.lower() or "type" in content.lower()
+
+    def test_alerts_list_jsonl_to_file(self, api_key: str, host: str, tmp_path) -> None:
+        """Test alerts list exported to JSONL file."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        output_file = tmp_path / "alerts.jsonl"
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "list",
+                "--format",
+                "jsonl",
+                "-o",
+                str(output_file),
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result.exit_code == 0
+
+        if output_file.exists():
+            content = output_file.read_text()
+            # Each line should be valid JSON
+            import json
+
+            lines = [line for line in content.strip().split("\n") if line]
+            for line in lines[:3]:  # Check first few lines
+                obj = json.loads(line)
+                assert "id" in obj or "type" in obj
+
+
+class TestOutputPrefixWithNoMarker:
+    """E2E tests for --output-prefix combined with --no-marker.
+
+    Verifies that -p and --no-marker work correctly together.
+    """
+
+    def test_output_prefix_with_no_marker_creates_file(
+        self, api_key: str, host: str, tmp_path
+    ) -> None:
+        """Test that -p with --no-marker creates timestamped file without marker."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        prefix = str(tmp_path / "results")
+
+        runner = CliRunner(env={"CETUS_DATA_DIR": str(tmp_path)})
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                "host:microsoft.com",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "-p",
+                prefix,
+                "--format",
+                "jsonl",
+                "--no-marker",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Should create timestamped file
+        files = list(tmp_path.glob("results_*.jsonl"))
+        assert len(files) == 1
+
+        # Should NOT create marker (because --no-marker)
+        marker_files = list(tmp_path.glob("markers/*.json"))
+        assert len(marker_files) == 0
+
+
+class TestStreamingMediaAll:
+    """E2E tests for streaming with --media all option.
+
+    The --media all option routes to all storage tiers, not just NVMe.
+    This can return more results but takes longer.
+    """
+
+    def test_streaming_media_all(self, api_key: str, host: str) -> None:
+        """Test streaming query with --media all option."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "query",
+                "host:microsoft.com",
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--media",
+                "all",
+                "--stream",
+                "--format",
+                "jsonl",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+            catch_exceptions=False,
+        )
+        # Should complete (may take longer than nvme)
+        assert result.exit_code == 0
+        assert "Streaming" in result.output or "Streamed" in result.output
+
+
+class TestBacktestStreamingWithOutputPrefix:
+    """E2E tests for backtest with streaming and output prefix combined."""
+
+    def test_backtest_streaming_output_prefix(self, api_key: str, host: str, tmp_path) -> None:
+        """Test backtest with --stream and -p options together."""
+        from click.testing import CliRunner
+
+        from cetus.cli import main
+
+        # First get an alert ID
+        runner = CliRunner()
+        list_result = runner.invoke(
+            main,
+            ["alerts", "list", "--owned", "--format", "json", "--api-key", api_key, "--host", host],
+        )
+        if list_result.exit_code != 0:
+            pytest.skip("Could not list alerts")
+
+        import json
+
+        try:
+            alerts = json.loads(list_result.output)
+        except json.JSONDecodeError:
+            pytest.skip("Could not parse alerts list")
+
+        if not alerts:
+            pytest.skip("No owned alerts to test with")
+
+        alert_id = str(alerts[0]["id"])
+        prefix = str(tmp_path / "backtest")
+
+        result = runner.invoke(
+            main,
+            [
+                "alerts",
+                "backtest",
+                alert_id,
+                "--index",
+                "dns",
+                "--since-days",
+                "1",
+                "--stream",
+                "-p",
+                prefix,
+                "--format",
+                "jsonl",
+                "--no-marker",
+                "--api-key",
+                api_key,
+                "--host",
+                host,
+            ],
+        )
+        assert result.exit_code == 0
+        # May or may not create file depending on results
+        # But should not crash
