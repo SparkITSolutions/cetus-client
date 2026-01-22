@@ -218,8 +218,8 @@ class CetusClient:
         timestamp_field = f"{index}_timestamp"
 
         if marker:
-            # Resume from marker position
-            return f" AND {timestamp_field}:[{marker.last_timestamp} TO *]"
+            # Resume from marker position (strictly greater than - no duplicates possible)
+            return f" AND {timestamp_field}:{{{marker.last_timestamp} TO *]"
         elif since_days:
             # Look back N days
             since_date = (datetime.today() - timedelta(days=since_days)).replace(microsecond=0)
@@ -263,10 +263,12 @@ class CetusClient:
                 return json.dumps(parsed_query)
 
             # Build a DSL query with both the original query and time filter
+            # Use "gt" (strictly greater than) for marker-based queries - no duplicates
+            range_op = "gt" if marker else "gte"
             wrapped_query = {
                 "bool": {
                     "must": [parsed_query],
-                    "filter": [{"range": {timestamp_field: {"gte": time_value}}}],
+                    "filter": [{"range": {timestamp_field: {range_op: time_value}}}],
                 }
             }
             return json.dumps(wrapped_query)
@@ -395,14 +397,14 @@ class CetusClient:
         self._validate_params(index, media)
         all_data: list[dict] = []
         pages_fetched = 0
-        last_uuid: str | None = None
-        last_timestamp: str | None = None
+        max_timestamp: str | None = None
+        max_uuid: str | None = None
         pit_id: str | None = None
         search_after: list | None = None
-        marker_uuid = marker.last_uuid if marker else None
         timestamp_field = f"{index}_timestamp"
 
         # Build initial query with time filter (only needed for first request)
+        # Uses ">" (strictly greater than) for marker-based queries, so no skip logic needed
         full_query = self._build_full_query(search, index, since_days, marker)
 
         while True:
@@ -413,32 +415,15 @@ class CetusClient:
             if not data:
                 break
 
-            # If we have a marker, skip records until we pass it
-            if marker_uuid:
-                skip_count = 0
-                for item in data:
-                    skip_count += 1
-                    if item.get("uuid") == marker_uuid:
-                        marker_uuid = None  # Found it, stop skipping
-                        break
-
-                if skip_count == len(data):
-                    # Marker record was the last one or not found in this page
-                    if marker_uuid is None:
-                        # Found at end of page, nothing new here
-                        break
-                    # Not found yet, continue to next page
-                    pass
-                else:
-                    # Add records after the marker
-                    data = data[skip_count:]
-
             all_data.extend(data)
 
-            # Track last record for marker update
-            if all_data:
-                last_uuid = all_data[-1].get("uuid")
-                last_timestamp = all_data[-1].get(timestamp_field)
+            # Track the newest record seen (by max timestamp) for the next marker.
+            # This is defensive - works regardless of server sort order.
+            for record in data:
+                ts = record.get(timestamp_field)
+                if ts and (max_timestamp is None or ts > max_timestamp):
+                    max_timestamp = ts
+                    max_uuid = record.get("uuid")
 
             # Report progress
             if progress_callback:
@@ -455,8 +440,8 @@ class CetusClient:
         return QueryResult(
             data=all_data,
             total_fetched=len(all_data),
-            last_uuid=last_uuid,
-            last_timestamp=last_timestamp,
+            last_uuid=max_uuid,
+            last_timestamp=max_timestamp,
             pages_fetched=pages_fetched,
         )
 
@@ -561,14 +546,14 @@ class CetusClient:
         self._validate_params(index, media)
         all_data: list[dict] = []
         pages_fetched = 0
-        last_uuid: str | None = None
-        last_timestamp: str | None = None
+        max_timestamp: str | None = None
+        max_uuid: str | None = None
         pit_id: str | None = None
         search_after: list | None = None
-        marker_uuid = marker.last_uuid if marker else None
         timestamp_field = f"{index}_timestamp"
 
         # Build initial query with time filter (only needed for first request)
+        # Uses ">" (strictly greater than) for marker-based queries, so no skip logic needed
         full_query = self._build_full_query(search, index, since_days, marker)
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -582,32 +567,15 @@ class CetusClient:
                 if not data:
                     break
 
-                # If we have a marker, skip records until we pass it
-                if marker_uuid:
-                    skip_count = 0
-                    for item in data:
-                        skip_count += 1
-                        if item.get("uuid") == marker_uuid:
-                            marker_uuid = None  # Found it, stop skipping
-                            break
-
-                    if skip_count == len(data):
-                        # Marker record was the last one or not found in this page
-                        if marker_uuid is None:
-                            # Found at end of page, nothing new here
-                            break
-                        # Not found yet, continue to next page
-                        pass
-                    else:
-                        # Add records after the marker
-                        data = data[skip_count:]
-
                 all_data.extend(data)
 
-                # Track last record for marker update
-                if all_data:
-                    last_uuid = all_data[-1].get("uuid")
-                    last_timestamp = all_data[-1].get(timestamp_field)
+                # Track the newest record seen (by max timestamp) for the next marker.
+                # This is defensive - works regardless of server sort order.
+                for record in data:
+                    ts = record.get(timestamp_field)
+                    if ts and (max_timestamp is None or ts > max_timestamp):
+                        max_timestamp = ts
+                        max_uuid = record.get("uuid")
 
                 # Report progress
                 if progress_callback:
@@ -624,8 +592,8 @@ class CetusClient:
         return QueryResult(
             data=all_data,
             total_fetched=len(all_data),
-            last_uuid=last_uuid,
-            last_timestamp=last_timestamp,
+            last_uuid=max_uuid,
+            last_timestamp=max_timestamp,
             pages_fetched=pages_fetched,
         )
 
@@ -648,8 +616,8 @@ class CetusClient:
         self._validate_params(index, media)
         pit_id: str | None = None
         search_after: list | None = None
-        marker_uuid = marker.last_uuid if marker else None
 
+        # Uses ">" (strictly greater than) for marker-based queries, so no skip logic needed
         full_query = self._build_full_query(search, index, since_days, marker)
 
         while True:
@@ -658,21 +626,8 @@ class CetusClient:
             if not data:
                 break
 
-            # Skip to marker position if needed
-            start_idx = 0
-            if marker_uuid:
-                for i, item in enumerate(data):
-                    if item.get("uuid") == marker_uuid:
-                        start_idx = i + 1
-                        marker_uuid = None
-                        break
-                if marker_uuid:
-                    # Marker not found in this page, skip all
-                    start_idx = len(data)
-
-            # Yield records
-            for item in data[start_idx:]:
-                yield item
+            # Yield all records - time filter already excludes marker and older records
+            yield from data
 
             # Check if there are more pages
             if not response.get("has_more", False):
@@ -713,9 +668,7 @@ class CetusClient:
 
         self._validate_params(index, media)
 
-        marker_uuid = marker.last_uuid if marker else None
-        past_marker = marker_uuid is None
-
+        # Uses ">" (strictly greater than) for marker-based queries, so no skip logic needed
         full_query = self._build_full_query(search, index, since_days, marker)
 
         body = {
@@ -763,7 +716,8 @@ class CetusClient:
                         status_code=response.status_code,
                     )
 
-                # Read lines as they arrive
+                # Read lines as they arrive.
+                # Time filter already excludes marker and older records.
                 for line in response.iter_lines():
                     if not line:
                         continue
@@ -772,12 +726,6 @@ class CetusClient:
                         record = json.loads(line)
                     except json.JSONDecodeError:
                         logger.warning("Failed to parse NDJSON line: %s", line[:100])
-                        continue
-
-                    # Skip records until we pass the marker
-                    if not past_marker:
-                        if record.get("uuid") == marker_uuid:
-                            past_marker = True
                         continue
 
                     yield record
@@ -817,9 +765,7 @@ class CetusClient:
 
         self._validate_params(index, media)
 
-        marker_uuid = marker.last_uuid if marker else None
-        past_marker = marker_uuid is None
-
+        # Uses ">" (strictly greater than) for marker-based queries, so no skip logic needed
         full_query = self._build_full_query(search, index, since_days, marker)
 
         body = {
@@ -863,6 +809,7 @@ class CetusClient:
                         )
 
                     # Read lines as they arrive - async iteration allows signal processing
+                    # Time filter already excludes marker and older records.
                     async for line in response.aiter_lines():
                         if not line:
                             continue
@@ -871,12 +818,6 @@ class CetusClient:
                             record = json.loads(line)
                         except json.JSONDecodeError:
                             logger.warning("Failed to parse NDJSON line: %s", line[:100])
-                            continue
-
-                        # Skip records until we pass the marker
-                        if not past_marker:
-                            if record.get("uuid") == marker_uuid:
-                                past_marker = True
                             continue
 
                         yield record

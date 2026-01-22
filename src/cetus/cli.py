@@ -928,16 +928,21 @@ def markers_list() -> None:
     from rich.table import Table
 
     table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("#", style="dim")
     table.add_column("Index")
+    table.add_column("Type")
     table.add_column("Query")
     table.add_column("Last Timestamp")
     table.add_column("Updated")
 
-    for m in all_markers:
+    for idx, m in enumerate(all_markers, 1):
         query_display = m.query if len(m.query) <= 40 else m.query[:37] + "..."
-        table.add_row(m.index, query_display, m.last_timestamp, m.updated_at[:19])
+        table.add_row(
+            str(idx), m.index, m.mode_display, query_display, m.last_timestamp, m.updated_at[:19]
+        )
 
     console.print(table)
+    console.print("\n[dim]Use 'cetus markers delete <#>' to delete a specific marker[/dim]")
 
 
 @markers.command("clear")
@@ -955,6 +960,41 @@ def markers_clear(index: str | None, yes: bool) -> None:
 
     count = store.clear(index)
     console.print(f"[green]Cleared {count} marker(s)[/green]")
+
+
+@markers.command("delete")
+@click.argument("marker_id", type=int)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def markers_delete(marker_id: int, yes: bool) -> None:
+    """Delete a specific marker by its number from 'markers list'."""
+    store = MarkerStore()
+    markers_with_paths = store.list_all_with_paths()
+
+    if not markers_with_paths:
+        console.print("[yellow]No markers stored[/yellow]")
+        return
+
+    if marker_id < 1 or marker_id > len(markers_with_paths):
+        console.print(f"[red]Invalid marker number. Use 1-{len(markers_with_paths)}[/red]")
+        return
+
+    marker, path = markers_with_paths[marker_id - 1]
+    query_display = marker.query if len(marker.query) <= 50 else marker.query[:47] + "..."
+
+    if not yes:
+        console.print(f"Marker #{marker_id}:")
+        console.print(f"  Index: {marker.index}")
+        console.print(f"  Type:  {marker.mode_display}")
+        console.print(f"  Query: {query_display}")
+        console.print(f"  Last:  {marker.last_timestamp}")
+        if not click.confirm("Delete this marker?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    if store.delete_by_path(path):
+        console.print(f"[green]Deleted marker #{marker_id}[/green]")
+    else:
+        console.print("[red]Failed to delete marker[/red]")
 
 
 @main.group()

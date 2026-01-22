@@ -489,3 +489,195 @@ class TestMarkerStoreClear:
         store = MarkerStore(markers_dir=tmp_path / "nonexistent")
         count = store.clear()
         assert count == 0
+
+
+class TestLegacyMarkerMigration:
+    """Tests for automatic migration of legacy markers (no mode field)."""
+
+    @pytest.fixture
+    def markers_dir(self, tmp_path: Path) -> Path:
+        """Create temporary markers directory."""
+        d = tmp_path / "markers"
+        d.mkdir()
+        return d
+
+    @pytest.fixture
+    def store(self, markers_dir: Path) -> MarkerStore:
+        """Create MarkerStore with temporary directory."""
+        return MarkerStore(markers_dir=markers_dir)
+
+    def test_get_migrates_legacy_marker_on_file_mode(
+        self, store: MarkerStore, markers_dir: Path
+    ):
+        """get() with mode='file' should find and migrate a legacy marker."""
+        query = "host:*.example.com"
+        index = "dns"
+
+        # Create legacy marker (no mode in hash, no mode in data)
+        legacy_hash = _query_hash(query, index, None)
+        legacy_data = {
+            "query": query,
+            "index": index,
+            "last_timestamp": "2025-01-01T10:00:00Z",
+            "last_uuid": "legacy-uuid",
+            "updated_at": "2025-01-01T12:00:00Z",
+        }
+        legacy_path = markers_dir / f"{index}_{legacy_hash}.json"
+        legacy_path.write_text(json.dumps(legacy_data))
+
+        # Request with mode="file" - should find and migrate
+        result = store.get(query, index, mode="file")
+
+        assert result is not None
+        assert result.query == query
+        assert result.last_uuid == "legacy-uuid"
+        assert result.mode == "file"  # Should have mode set now
+
+        # Legacy file should be gone
+        assert not legacy_path.exists()
+
+        # New file should exist at mode-aware path
+        new_hash = _query_hash(query, index, "file")
+        new_path = markers_dir / f"{index}_{new_hash}.json"
+        assert new_path.exists()
+
+        # New file should have mode in data
+        new_data = json.loads(new_path.read_text())
+        assert new_data["mode"] == "file"
+
+    def test_get_does_not_migrate_for_prefix_mode(
+        self, store: MarkerStore, markers_dir: Path
+    ):
+        """get() with mode='prefix' should NOT migrate legacy markers."""
+        query = "host:*.example.com"
+        index = "dns"
+
+        # Create legacy marker
+        legacy_hash = _query_hash(query, index, None)
+        legacy_data = {
+            "query": query,
+            "index": index,
+            "last_timestamp": "2025-01-01T10:00:00Z",
+            "last_uuid": "legacy-uuid",
+            "updated_at": "2025-01-01T12:00:00Z",
+        }
+        legacy_path = markers_dir / f"{index}_{legacy_hash}.json"
+        legacy_path.write_text(json.dumps(legacy_data))
+
+        # Request with mode="prefix" - should NOT find legacy marker
+        result = store.get(query, index, mode="prefix")
+
+        assert result is None
+        # Legacy file should still exist
+        assert legacy_path.exists()
+
+    def test_list_all_migrates_legacy_markers(
+        self, store: MarkerStore, markers_dir: Path
+    ):
+        """list_all() should migrate legacy markers to mode='file'."""
+        # Create legacy marker without mode
+        legacy_data = {
+            "query": "host:test.com",
+            "index": "dns",
+            "last_timestamp": "2025-01-01T10:00:00Z",
+            "last_uuid": "legacy-uuid",
+            "updated_at": "2025-01-01T12:00:00Z",
+            # No "mode" field
+        }
+        legacy_path = markers_dir / "dns_legacy123.json"
+        legacy_path.write_text(json.dumps(legacy_data))
+
+        # List all should migrate
+        markers = store.list_all()
+
+        assert len(markers) == 1
+        assert markers[0].mode == "file"  # Should be migrated
+
+        # Legacy file should be gone
+        assert not legacy_path.exists()
+
+        # New file should exist
+        new_files = list(markers_dir.glob("*.json"))
+        assert len(new_files) == 1
+
+        # New file should have mode
+        new_data = json.loads(new_files[0].read_text())
+        assert new_data["mode"] == "file"
+
+    def test_list_all_with_paths_migrates_legacy_markers(
+        self, store: MarkerStore, markers_dir: Path
+    ):
+        """list_all_with_paths() should migrate legacy markers."""
+        # Create legacy marker without mode
+        legacy_data = {
+            "query": "host:test.com",
+            "index": "dns",
+            "last_timestamp": "2025-01-01T10:00:00Z",
+            "last_uuid": "legacy-uuid",
+            "updated_at": "2025-01-01T12:00:00Z",
+        }
+        legacy_path = markers_dir / "dns_legacy456.json"
+        legacy_path.write_text(json.dumps(legacy_data))
+
+        # List with paths should migrate
+        results = store.list_all_with_paths()
+
+        assert len(results) == 1
+        marker, path = results[0]
+        assert marker.mode == "file"
+
+        # Path should be the new migrated path
+        assert path != legacy_path
+        assert path.exists()
+        assert not legacy_path.exists()
+
+    def test_migration_preserves_all_data(
+        self, store: MarkerStore, markers_dir: Path
+    ):
+        """Migration should preserve all marker data."""
+        query = "host:preserve.com"
+        index = "certstream"
+
+        legacy_data = {
+            "query": query,
+            "index": index,
+            "last_timestamp": "2025-06-15T14:30:00.123456Z",
+            "last_uuid": "uuid-12345-abcde",
+            "updated_at": "2025-06-15T14:35:00Z",
+        }
+        legacy_hash = _query_hash(query, index, None)
+        legacy_path = markers_dir / f"{index}_{legacy_hash}.json"
+        legacy_path.write_text(json.dumps(legacy_data))
+
+        result = store.get(query, index, mode="file")
+
+        assert result is not None
+        assert result.query == query
+        assert result.index == index
+        assert result.last_timestamp == "2025-06-15T14:30:00.123456Z"
+        assert result.last_uuid == "uuid-12345-abcde"
+        assert result.updated_at == "2025-06-15T14:35:00Z"
+        assert result.mode == "file"
+
+    def test_no_migration_when_marker_already_has_mode(
+        self, store: MarkerStore, markers_dir: Path
+    ):
+        """Markers with mode field should not trigger migration."""
+        # Create modern marker with mode
+        modern_data = {
+            "query": "host:modern.com",
+            "index": "dns",
+            "last_timestamp": "2025-01-01T10:00:00Z",
+            "last_uuid": "modern-uuid",
+            "updated_at": "2025-01-01T12:00:00Z",
+            "mode": "file",
+        }
+        marker_path = markers_dir / "dns_modern.json"
+        marker_path.write_text(json.dumps(modern_data))
+
+        markers = store.list_all()
+
+        assert len(markers) == 1
+        assert markers[0].mode == "file"
+        # File should still exist at same location (not migrated)
+        assert marker_path.exists()

@@ -508,23 +508,29 @@ class TestCetusClientQuery:
         assert result.total_fetched == 2
         client.close()
 
-    def test_query_with_marker_skips_to_position(self, client: CetusClient, httpx_mock):
-        """query with marker should skip records before marker position."""
+    def test_query_with_marker_uses_strict_greater_than_filter(
+        self, client: CetusClient, httpx_mock
+    ):
+        """query with marker should use > (strictly greater than) time filter.
+
+        The server filters with timestamp > marker_timestamp, so only newer
+        records are returned. No client-side skip logic is needed.
+        """
         marker = Marker(
             query="host:*",
             index="dns",
             last_timestamp="2025-01-01T00:00:00Z",
-            last_uuid="skip-me",
+            last_uuid="marker-record",
             updated_at="2025-01-02T00:00:00Z",
         )
 
+        # Server returns only records newer than marker (simulating > filter)
         httpx_mock.add_response(
             method="POST",
             url="http://localhost/api/query/",
             json={
                 "data": [
-                    {"uuid": "skip-me", "dns_timestamp": "2025-01-01T00:00:00Z"},
-                    {"uuid": "keep-this", "dns_timestamp": "2025-01-01T01:00:00Z"},
+                    {"uuid": "newer-record", "dns_timestamp": "2025-01-01T01:00:00Z"},
                 ],
                 "has_more": False,
             },
@@ -532,8 +538,17 @@ class TestCetusClientQuery:
 
         result = client.query("host:*", index="dns", marker=marker)
 
+        # All returned records should be included (no client-side filtering)
         assert len(result.data) == 1
-        assert result.data[0]["uuid"] == "keep-this"
+        assert result.data[0]["uuid"] == "newer-record"
+
+        # Verify the query includes the > time filter (Lucene syntax uses { for exclusive)
+        requests = httpx_mock.get_requests()
+        assert len(requests) == 1
+        import json
+
+        body = json.loads(requests[0].content)
+        assert "{2025-01-01T00:00:00Z TO *]" in body["query"]
         client.close()
 
 

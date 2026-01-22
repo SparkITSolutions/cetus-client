@@ -65,16 +65,20 @@ class Marker:
     last_timestamp: str
     last_uuid: str
     updated_at: str
+    mode: str | None = None  # "file" (-o) or "prefix" (-p), None for legacy markers
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "query": self.query,
             "index": self.index,
             "last_timestamp": self.last_timestamp,
             "last_uuid": self.last_uuid,
             "updated_at": self.updated_at,
         }
+        if self.mode:
+            result["mode"] = self.mode
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> Marker:
@@ -85,7 +89,18 @@ class Marker:
             last_timestamp=data["last_timestamp"],
             last_uuid=data["last_uuid"],
             updated_at=data.get("updated_at", ""),
+            mode=data.get("mode"),
         )
+
+    @property
+    def mode_display(self) -> str:
+        """Human-readable mode display for CLI output."""
+        if self.mode == "file":
+            return "-o"
+        elif self.mode == "prefix":
+            return "-p"
+        else:
+            return "-"  # Legacy marker without mode
 
 
 class MarkerStore:
@@ -108,8 +123,21 @@ class MarkerStore:
             mode: Output mode ("file" or "prefix") - different modes have separate markers
 
         Validates file size before reading to prevent memory exhaustion.
+
+        For backward compatibility: if mode="file" and no marker is found,
+        checks for a legacy marker (created before mode was added to the hash)
+        and migrates it automatically.
         """
         path = self._marker_path(query, index, mode)
+
+        # Check for legacy marker migration
+        if not path.exists() and mode == "file":
+            legacy_path = self._marker_path(query, index, None)
+            if legacy_path.exists():
+                marker = self._migrate_legacy_marker(legacy_path, path, mode)
+                if marker:
+                    return marker
+
         if not path.exists():
             return None
 
@@ -125,6 +153,68 @@ class MarkerStore:
         except (json.JSONDecodeError, KeyError, OSError):
             # Corrupted marker file, treat as missing
             return None
+
+    def _migrate_legacy_marker(self, legacy_path: Path, new_path: Path, mode: str) -> Marker | None:
+        """Migrate a legacy marker (no mode) to the new format with mode.
+
+        Reads the legacy marker, adds the mode field, saves to new path,
+        and deletes the legacy file.
+        """
+        try:
+            if legacy_path.stat().st_size > MAX_MARKER_FILE_SIZE:
+                return None
+
+            data = json.loads(legacy_path.read_text())
+            data["mode"] = mode
+            marker = Marker.from_dict(data)
+
+            # Save to new location
+            new_path.write_text(json.dumps(marker.to_dict(), indent=2))
+            _set_secure_permissions(new_path)
+
+            # Delete legacy file
+            legacy_path.unlink()
+
+            return marker
+        except (json.JSONDecodeError, KeyError, OSError):
+            return None
+
+    def _migrate_legacy_marker_in_place(
+        self, marker: Marker, legacy_path: Path
+    ) -> tuple[Marker, Path]:
+        """Migrate a legacy marker in place during listing.
+
+        Updates the marker with mode="file", saves to new path with updated hash,
+        and deletes the legacy file.
+
+        Returns the updated (marker, path) tuple. If migration fails, returns
+        the original marker with mode set (in memory only) and original path.
+        """
+        mode = "file"
+        new_path = self._marker_path(marker.query, marker.index, mode)
+
+        # Update marker with mode
+        updated_marker = Marker(
+            query=marker.query,
+            index=marker.index,
+            last_timestamp=marker.last_timestamp,
+            last_uuid=marker.last_uuid,
+            updated_at=marker.updated_at,
+            mode=mode,
+        )
+
+        try:
+            # Save to new location
+            new_path.write_text(json.dumps(updated_marker.to_dict(), indent=2))
+            _set_secure_permissions(new_path)
+
+            # Delete legacy file
+            legacy_path.unlink()
+
+            return updated_marker, new_path
+        except OSError:
+            # Migration failed, return marker with mode set in memory only
+            return updated_marker, legacy_path
 
     def save(
         self, query: str, index: str, last_timestamp: str, last_uuid: str, mode: str | None = None
@@ -149,6 +239,7 @@ class MarkerStore:
             last_timestamp=last_timestamp,
             last_uuid=last_uuid,
             updated_at=datetime.now().isoformat(),
+            mode=mode,
         )
 
         path = self._marker_path(query, index, mode)
@@ -168,6 +259,7 @@ class MarkerStore:
         """List all stored markers.
 
         Skips files that are corrupted or exceed the size limit.
+        Automatically migrates legacy markers (no mode) to mode="file".
         """
         if not self.markers_dir.exists():
             return []
@@ -180,11 +272,53 @@ class MarkerStore:
                     continue
 
                 data = json.loads(path.read_text())
-                markers.append(Marker.from_dict(data))
+                marker = Marker.from_dict(data)
+
+                # Migrate legacy markers (no mode) to mode="file"
+                if marker.mode is None:
+                    marker, path = self._migrate_legacy_marker_in_place(marker, path)
+
+                markers.append(marker)
             except (json.JSONDecodeError, KeyError, OSError):
                 continue  # Skip corrupted files
 
         return sorted(markers, key=lambda m: m.updated_at, reverse=True)
+
+    def list_all_with_paths(self) -> list[tuple[Marker, Path]]:
+        """List all stored markers with their file paths.
+
+        Returns list of (Marker, Path) tuples sorted by updated_at descending.
+        Useful for delete-by-index operations.
+        Automatically migrates legacy markers (no mode) to mode="file".
+        """
+        if not self.markers_dir.exists():
+            return []
+
+        results = []
+        for path in self.markers_dir.glob("*.json"):
+            try:
+                if path.stat().st_size > MAX_MARKER_FILE_SIZE:
+                    continue
+
+                data = json.loads(path.read_text())
+                marker = Marker.from_dict(data)
+
+                # Migrate legacy markers (no mode) to mode="file"
+                if marker.mode is None:
+                    marker, path = self._migrate_legacy_marker_in_place(marker, path)
+
+                results.append((marker, path))
+            except (json.JSONDecodeError, KeyError, OSError):
+                continue
+
+        return sorted(results, key=lambda x: x[0].updated_at, reverse=True)
+
+    def delete_by_path(self, path: Path) -> bool:
+        """Delete a marker by its file path. Returns True if it existed."""
+        if path.exists() and path.parent == self.markers_dir:
+            path.unlink()
+            return True
+        return False
 
     def clear(self, index: str | None = None) -> int:
         """Clear markers. If index is provided, only clear that index.

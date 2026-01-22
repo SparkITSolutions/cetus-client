@@ -162,7 +162,9 @@ class TestMarkersCommand:
 
         assert result.exit_code == 0
         assert "dns" in result.output
-        assert "example.com" in result.output
+        assert "example" in result.output  # May be truncated in table
+        assert "Type" in result.output  # New column
+        assert "markers delete" in result.output  # Help hint
 
     def test_markers_clear_with_confirmation(self, runner: CliRunner, temp_data_dir: Path):
         """markers clear should ask for confirmation."""
@@ -205,6 +207,81 @@ class TestMarkersCommand:
         # Only dns marker should be cleared
         assert (markers_dir / "certstream_test2.json").exists()
         assert not (markers_dir / "dns_test1.json").exists()
+
+    def test_markers_delete_single(self, runner: CliRunner, temp_data_dir: Path):
+        """markers delete should delete a specific marker by number."""
+        markers_dir = temp_data_dir / "markers"
+        markers_dir.mkdir()
+
+        # Create marker files with valid JSON
+        marker1 = {
+            "query": "host:test1.com",
+            "index": "dns",
+            "last_timestamp": "2025-01-01T00:00:00Z",
+            "last_uuid": "uuid-1",
+            "updated_at": "2025-01-02T00:00:00Z",
+        }
+        marker2 = {
+            "query": "host:test2.com",
+            "index": "dns",
+            "last_timestamp": "2025-01-01T00:00:00Z",
+            "last_uuid": "uuid-2",
+            "updated_at": "2025-01-01T00:00:00Z",  # Older, so will be #2
+        }
+        (markers_dir / "dns_marker1.json").write_text(json.dumps(marker1))
+        (markers_dir / "dns_marker2.json").write_text(json.dumps(marker2))
+
+        with patch("cetus.markers.get_markers_dir", return_value=markers_dir):
+            result = runner.invoke(main, ["markers", "delete", "1", "--yes"])
+
+        assert result.exit_code == 0
+        assert "Deleted marker #1" in result.output
+        # One marker should remain
+        assert len(list(markers_dir.glob("*.json"))) == 1
+
+    def test_markers_delete_invalid_number(self, runner: CliRunner, temp_data_dir: Path):
+        """markers delete should error on invalid marker number."""
+        markers_dir = temp_data_dir / "markers"
+        markers_dir.mkdir()
+
+        marker = {
+            "query": "host:test.com",
+            "index": "dns",
+            "last_timestamp": "2025-01-01T00:00:00Z",
+            "last_uuid": "uuid-1",
+            "updated_at": "2025-01-02T00:00:00Z",
+        }
+        (markers_dir / "dns_test.json").write_text(json.dumps(marker))
+
+        with patch("cetus.markers.get_markers_dir", return_value=markers_dir):
+            result = runner.invoke(main, ["markers", "delete", "5", "--yes"])
+
+        assert result.exit_code == 0  # CLI doesn't use exit codes for user errors
+        assert "Invalid marker number" in result.output
+
+    def test_markers_delete_shows_confirmation(self, runner: CliRunner, temp_data_dir: Path):
+        """markers delete should show marker details before confirmation."""
+        markers_dir = temp_data_dir / "markers"
+        markers_dir.mkdir()
+
+        marker = {
+            "query": "host:confirm.com",
+            "index": "dns",
+            "last_timestamp": "2025-01-01T00:00:00Z",
+            "last_uuid": "uuid-1",
+            "updated_at": "2025-01-02T00:00:00Z",
+            "mode": "file",  # Include mode to prevent migration renaming file
+        }
+        (markers_dir / "dns_test.json").write_text(json.dumps(marker))
+
+        with patch("cetus.markers.get_markers_dir", return_value=markers_dir):
+            result = runner.invoke(main, ["markers", "delete", "1"], input="n\n")
+
+        assert result.exit_code == 0
+        assert "confirm.com" in result.output
+        assert "Cancelled" in result.output
+        # Marker should still exist (wasn't deleted due to cancellation)
+        assert len(list(markers_dir.glob("*.json"))) == 1
 
 
 class TestQueryCommand:

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the CLI client for the Cetus threat intelligence alerting API. It queries DNS records, certificate transparency logs, and alert results from the Cetus platform at `alerting.sparkits.ca`.
 
-Before running tests, ask the user for an API Key, and if provided, set the CETUS_E2E=1 and CETUS_API_KEY=<api key> environment variables so the E2E tests will run.  Otherwise if the user doesn't want to provide one, omit them and let the user know the E2E tests won't run.
+Before running tests, ask the user for an API Key, and if provided, set the CETUS_E2E_TEST=1 and CETUS_API_KEY=<api key> environment variables so the E2E tests will run.  Otherwise if the user doesn't want to provide one, omit them and let the user know the E2E tests won't run.
 
 ## Development Commands
 
@@ -91,6 +91,32 @@ The CLI is built with Click and uses httpx for HTTP requests. All source code is
   - `/api/query/` - Search DNS/certstream/alerting indices
   - `/alerts/api/unified/` - List alert definitions
   - `/api/alert_results/<id>` - Get results for an alert
+
+### Marker System (Incremental Queries)
+
+The marker system enables incremental queries - fetching only new records since the last query.
+
+**How it works:**
+1. After each query, the client saves a marker with the **newest** timestamp and UUID seen
+2. On subsequent queries, the time filter uses `timestamp > marker_timestamp` (strictly greater than)
+3. Only records newer than the marker are returned - no duplicates
+
+**Key implementation details:**
+- **Tracks max timestamp:** The client scans all returned records to find the maximum timestamp, regardless of server sort order. This is defensive - works even if server sort changes.
+- **Uses strictly greater than (`>`):** The time filter excludes the marker timestamp entirely. With microsecond precision (6 decimal places), duplicate timestamps are extremely rare.
+- **No skip logic needed:** Because the server filters with `>`, the marker record itself is never returned. No client-side deduplication required.
+
+**Marker storage:**
+- Location: `~/.local/share/cetus/markers/` (Linux) or `%APPDATA%\cetus\markers\` (Windows)
+- Filename: `{index}_{query_hash}.json`
+- Contents: `query`, `index`, `last_timestamp`, `last_uuid`, `updated_at`
+
+**Rolling back a marker:**
+To re-fetch previously seen data, manually edit the marker file to an older `last_timestamp`. The next query will return all records newer than that timestamp.
+
+**E2E tests:**
+- `test_query_with_marker_returns_only_newer_records` - Verifies records are strictly newer than marker
+- `test_query_with_rolled_back_marker_returns_previously_seen_record` - Verifies rollback works
 
 ### Related Repository
 

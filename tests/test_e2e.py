@@ -212,6 +212,168 @@ class TestQueryEndpoint:
         finally:
             client.close()
 
+    def test_query_with_marker_returns_only_newer_records(self, api_key: str, host: str) -> None:
+        """Test that marker-based queries return only records newer than marker.
+
+        This verifies the fix for the marker timestamp bug where the wrong
+        timestamp was being saved, causing subsequent queries to return no results.
+
+        The fix uses timestamp > marker_timestamp (strictly greater than) in the
+        query filter, so no records at or before the marker timestamp are returned.
+        """
+        from cetus.client import CetusClient
+        from cetus.markers import Marker
+
+        client = CetusClient(api_key=api_key, host=host, timeout=120)
+        try:
+            # Step 1: Run initial query to get some results
+            initial_result = client.query(
+                search=self.DATA_QUERY,
+                index="dns",
+                media="nvme",
+                since_days=7,
+            )
+
+            if len(initial_result.data) < 5:
+                pytest.skip("Not enough data for marker test")
+
+            # Step 2: Pick a timestamp from the middle of results
+            # Sort by timestamp to find a good marker point
+            sorted_data = sorted(initial_result.data, key=lambda x: x.get("dns_timestamp", ""))
+            mid_idx = len(sorted_data) // 2
+            marker_record = sorted_data[mid_idx]
+            marker_timestamp = marker_record.get("dns_timestamp")
+            marker_uuid = marker_record.get("uuid")
+
+            assert marker_timestamp, "Record should have dns_timestamp"
+            assert marker_uuid, "Record should have uuid"
+
+            # Step 3: Create marker and run query with it
+            marker = Marker(
+                query=self.DATA_QUERY,
+                index="dns",
+                last_timestamp=marker_timestamp,
+                last_uuid=marker_uuid,
+                updated_at=marker_timestamp,
+            )
+
+            marker_result = client.query(
+                search=self.DATA_QUERY,
+                index="dns",
+                media="nvme",
+                since_days=7,
+                marker=marker,
+            )
+
+            # Step 4: Verify all returned records are strictly newer than marker
+            for record in marker_result.data:
+                record_ts = record.get("dns_timestamp")
+                assert record_ts is not None, "All records should have timestamp"
+                assert record_ts > marker_timestamp, (
+                    f"Record timestamp {record_ts} should be > marker {marker_timestamp}"
+                )
+
+            # Step 5: Verify the result tracks max timestamp correctly
+            if marker_result.data:
+                # last_timestamp should be the max timestamp seen
+                all_timestamps = [r.get("dns_timestamp") for r in marker_result.data]
+                max_ts = max(t for t in all_timestamps if t)
+                assert marker_result.last_timestamp == max_ts, (
+                    f"last_timestamp {marker_result.last_timestamp} should be max {max_ts}"
+                )
+
+        finally:
+            client.close()
+
+    def test_query_with_rolled_back_marker_returns_previously_seen_record(
+        self, api_key: str, host: str
+    ) -> None:
+        """Test that rolling back a marker allows re-fetching previously seen records.
+
+        This verifies that if you manually update a marker to an older timestamp,
+        the next query will return records that were previously "seen" - including
+        the exact record that was used as the original marker.
+
+        This is the key test for the marker bug fix: if the user's partner ran a
+        query on Jan 21, got data, then ran again on Jan 22 with no results,
+        rolling back the marker should let them re-fetch that Jan 21 data.
+        """
+        from cetus.client import CetusClient
+        from cetus.markers import Marker
+
+        client = CetusClient(api_key=api_key, host=host, timeout=120)
+        try:
+            # Step 1: Run initial query to get results
+            initial_result = client.query(
+                search=self.DATA_QUERY,
+                index="dns",
+                media="nvme",
+                since_days=7,
+            )
+
+            if len(initial_result.data) < 10:
+                pytest.skip("Not enough data for marker rollback test")
+
+            # Step 2: Identify the "newest" record (what the marker would save)
+            # This is the record with max timestamp
+            sorted_data = sorted(
+                initial_result.data,
+                key=lambda x: x.get("dns_timestamp", ""),
+                reverse=True,
+            )
+            newest_record = sorted_data[0]
+            newest_timestamp = newest_record.get("dns_timestamp")
+            newest_uuid = newest_record.get("uuid")
+
+            # Step 3: Pick an older record to use as the "rolled back" marker
+            # This simulates manually editing the marker to an earlier point
+            older_record = sorted_data[len(sorted_data) // 2]
+            older_timestamp = older_record.get("dns_timestamp")
+            older_uuid = older_record.get("uuid")
+
+            assert older_timestamp < newest_timestamp, "Older record should be older"
+
+            # Step 4: Create a marker at the older timestamp (simulating rollback)
+            rolled_back_marker = Marker(
+                query=self.DATA_QUERY,
+                index="dns",
+                last_timestamp=older_timestamp,
+                last_uuid=older_uuid,
+                updated_at=older_timestamp,
+            )
+
+            # Step 5: Query with the rolled-back marker
+            rollback_result = client.query(
+                search=self.DATA_QUERY,
+                index="dns",
+                media="nvme",
+                since_days=7,
+                marker=rolled_back_marker,
+            )
+
+            # Step 6: Verify we got results (the "newer" records we'd already seen)
+            assert len(rollback_result.data) > 0, (
+                "Rolling back marker should return previously seen records"
+            )
+
+            # Step 7: Verify the newest record from step 2 is in the results
+            # (This is the key assertion - we should be able to re-fetch it)
+            result_uuids = {r.get("uuid") for r in rollback_result.data}
+            assert newest_uuid in result_uuids, (
+                f"Expected to re-fetch record {newest_uuid} after marker rollback, "
+                f"but it was not in the {len(rollback_result.data)} returned records"
+            )
+
+            # Step 8: Verify all returned records have timestamp > rolled_back marker
+            for record in rollback_result.data:
+                record_ts = record.get("dns_timestamp")
+                assert record_ts > older_timestamp, (
+                    f"Record {record_ts} should be > marker {older_timestamp}"
+                )
+
+        finally:
+            client.close()
+
 
 class TestQueryStreamEndpoint:
     """E2E tests for the /api/query/stream/ endpoint.
@@ -4494,7 +4656,7 @@ class TestConfigForwardCompatibility:
             "timeout = 30\n"
             "since_days = 14\n"
             "# Unknown keys from future version\n"
-            'new_feature_flag = true\n'
+            "new_feature_flag = true\n"
             'experimental_mode = "beta"\n'
             "max_retries = 5\n"
         )
