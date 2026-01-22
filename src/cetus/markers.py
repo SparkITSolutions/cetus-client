@@ -96,9 +96,9 @@ class Marker:
     def mode_display(self) -> str:
         """Human-readable mode display for CLI output."""
         if self.mode == "file":
-            return "-o"
+            return "file"
         elif self.mode == "prefix":
-            return "-p"
+            return "prefix"
         else:
             return "-"  # Legacy marker without mode
 
