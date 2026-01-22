@@ -95,12 +95,11 @@ class Marker:
     @property
     def mode_display(self) -> str:
         """Human-readable mode display for CLI output."""
-        if self.mode == "file":
-            return "file"
-        elif self.mode == "prefix":
+        if self.mode == "prefix":
             return "prefix"
         else:
-            return "-"  # Legacy marker without mode
+            # "file" mode, or legacy markers (which get migrated to "file")
+            return "file"
 
 
 class MarkerStore:
@@ -181,7 +180,7 @@ class MarkerStore:
 
     def _migrate_legacy_marker_in_place(
         self, marker: Marker, legacy_path: Path
-    ) -> tuple[Marker, Path]:
+    ) -> tuple[Marker, Path] | None:
         """Migrate a legacy marker in place during listing.
 
         Updates the marker with mode="file", saves to new path with updated hash,
@@ -189,9 +188,21 @@ class MarkerStore:
 
         Returns the updated (marker, path) tuple. If migration fails, returns
         the original marker with mode set (in memory only) and original path.
+
+        Returns None if a new-format marker already exists for this query
+        (the legacy file is deleted as a duplicate).
         """
         mode = "file"
         new_path = self._marker_path(marker.query, marker.index, mode)
+
+        # If new-format marker already exists, this legacy marker is a duplicate.
+        # Just delete the legacy file and return None to skip it.
+        if new_path.exists():
+            try:
+                legacy_path.unlink()
+            except OSError:
+                pass  # Best effort deletion
+            return None
 
         # Update marker with mode
         updated_marker = Marker(
@@ -276,7 +287,10 @@ class MarkerStore:
 
                 # Migrate legacy markers (no mode) to mode="file"
                 if marker.mode is None:
-                    marker, path = self._migrate_legacy_marker_in_place(marker, path)
+                    result = self._migrate_legacy_marker_in_place(marker, path)
+                    if result is None:
+                        continue  # Duplicate legacy marker, skip
+                    marker, path = result
 
                 markers.append(marker)
             except (json.JSONDecodeError, KeyError, OSError):
@@ -305,7 +319,10 @@ class MarkerStore:
 
                 # Migrate legacy markers (no mode) to mode="file"
                 if marker.mode is None:
-                    marker, path = self._migrate_legacy_marker_in_place(marker, path)
+                    result = self._migrate_legacy_marker_in_place(marker, path)
+                    if result is None:
+                        continue  # Duplicate legacy marker, skip
+                    marker, path = result
 
                 results.append((marker, path))
             except (json.JSONDecodeError, KeyError, OSError):

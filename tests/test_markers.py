@@ -681,3 +681,95 @@ class TestLegacyMarkerMigration:
         assert markers[0].mode == "file"
         # File should still exist at same location (not migrated)
         assert marker_path.exists()
+
+    def test_migration_skips_duplicate_when_new_marker_exists(self, tmp_path: Path):
+        """When both legacy and new-format markers exist, skip the legacy one."""
+        markers_dir = tmp_path / "markers"
+        markers_dir.mkdir()
+        store = MarkerStore(markers_dir)
+
+        query = "host:microsoft.com"
+        index = "dns"
+
+        # Create legacy marker (no mode in hash)
+        legacy_hash = _query_hash(query, index, None)
+        legacy_path = markers_dir / f"{index}_{legacy_hash}.json"
+        legacy_data = {
+            "query": query,
+            "index": index,
+            "last_timestamp": "2026-01-18T13:00:00Z",  # Older timestamp
+            "last_uuid": "legacy-uuid",
+            "updated_at": "2026-01-19T13:00:00",
+        }
+        legacy_path.write_text(json.dumps(legacy_data))
+
+        # Create new-format marker (mode in hash)
+        new_hash = _query_hash(query, index, "file")
+        new_path = markers_dir / f"{index}_{new_hash}.json"
+        new_data = {
+            "query": query,
+            "index": index,
+            "last_timestamp": "2026-01-20T15:00:00Z",  # Newer timestamp
+            "last_uuid": "new-uuid",
+            "updated_at": "2026-01-21T15:00:00",
+            "mode": "file",
+        }
+        new_path.write_text(json.dumps(new_data))
+
+        # Both files exist
+        assert legacy_path.exists()
+        assert new_path.exists()
+
+        # List should return only ONE marker (not duplicate)
+        markers = store.list_all()
+        assert len(markers) == 1
+        # Should be the new marker (not overwritten by legacy)
+        assert markers[0].last_uuid == "new-uuid"
+        assert markers[0].last_timestamp == "2026-01-20T15:00:00Z"
+        assert markers[0].mode == "file"
+
+        # Legacy file should be deleted
+        assert not legacy_path.exists()
+        # New file should still exist with original data
+        assert new_path.exists()
+
+    def test_migration_duplicate_with_paths(self, tmp_path: Path):
+        """list_all_with_paths also handles duplicates correctly."""
+        markers_dir = tmp_path / "markers"
+        markers_dir.mkdir()
+        store = MarkerStore(markers_dir)
+
+        query = "host:test.com"
+        index = "dns"
+
+        # Create both legacy and new markers
+        legacy_hash = _query_hash(query, index, None)
+        legacy_path = markers_dir / f"{index}_{legacy_hash}.json"
+        legacy_path.write_text(json.dumps({
+            "query": query,
+            "index": index,
+            "last_timestamp": "2026-01-01T00:00:00Z",
+            "last_uuid": "old-uuid",
+            "updated_at": "2026-01-01T00:00:00",
+        }))
+
+        new_hash = _query_hash(query, index, "file")
+        new_path = markers_dir / f"{index}_{new_hash}.json"
+        new_path.write_text(json.dumps({
+            "query": query,
+            "index": index,
+            "last_timestamp": "2026-01-02T00:00:00Z",
+            "last_uuid": "new-uuid",
+            "updated_at": "2026-01-02T00:00:00",
+            "mode": "file",
+        }))
+
+        # list_all_with_paths should return only one entry
+        results = store.list_all_with_paths()
+        assert len(results) == 1
+        marker, path = results[0]
+        assert marker.last_uuid == "new-uuid"
+        assert path == new_path
+
+        # Legacy file should be deleted
+        assert not legacy_path.exists()
