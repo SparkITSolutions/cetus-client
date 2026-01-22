@@ -29,11 +29,51 @@ Download pre-built binaries from [GitHub Releases](https://github.com/SparkITSol
 
 ### From Source
 
+#### Using a Virtual Environment (Recommended)
+
+Isolates dependencies from your system Python.
+
+**Prerequisites:** Python 3.9+ with `venv` module. On Debian/Ubuntu, install it first:
+```bash
+sudo apt install python3-venv
+```
+
+On Windows and macOS, `venv` is included with the standard Python installer.
+
+```bash
+git clone https://github.com/SparkITSolutions/cetus-client.git
+cd cetus-client
+
+# Create virtual environment
+python -m venv venv
+
+# Activate (choose your platform)
+source venv/bin/activate      # Linux/macOS
+venv\Scripts\activate         # Windows (cmd)
+venv\Scripts\Activate.ps1     # Windows (PowerShell)
+
+# Install in editable mode
+pip install -e .
+```
+
+With the venv activated, the `cetus` command is available. Changes to source files take effect immediately (editable install).
+
+To deactivate the virtual environment:
+```bash
+deactivate
+```
+
+#### Global Installation
+
+Installs directly to your system Python (requires appropriate permissions):
+
 ```bash
 git clone https://github.com/SparkITSolutions/cetus-client.git
 cd cetus-client
 pip install -e .
 ```
+
+**Note:** On Linux/macOS, you may need `pip install --user -e .` or run as root. Using a virtual environment or pipx is generally preferred to avoid conflicts with system packages.
 
 ## Quick Start
 
@@ -376,6 +416,15 @@ See [SECURITY.md](SECURITY.md) for the full security policy and vulnerability re
 ## Development
 
 ```bash
+# Clone and set up virtual environment
+git clone https://github.com/SparkITSolutions/cetus-client.git
+cd cetus-client
+python -m venv venv
+
+# Activate (choose your platform)
+source venv/bin/activate      # Linux/macOS
+venv\Scripts\activate         # Windows (cmd)
+
 # Install with dev dependencies
 pip install -e ".[dev]"
 
