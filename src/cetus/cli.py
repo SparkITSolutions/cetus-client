@@ -19,7 +19,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from . import __version__
 from .client import CetusClient
-from .config import Config, get_config_file
+from .config import DEFAULT_HOST, DEFAULT_TIMEOUT, Config, get_config_file
 from .exceptions import CetusError
 from .formatters import get_formatter
 from .markers import MarkerStore
@@ -276,6 +276,9 @@ def execute_query_and_output(
         # Show marker info so user knows we're resuming
         ts_display = marker.last_timestamp[:19]
         console.print(f"[dim]Resuming from: {ts_display}[/dim]")
+    elif since_days:
+        # Show since_days info so user knows there's a time filter active
+        console.print(f"[dim]Filtering to last {since_days} days[/dim]")
 
     formatter = get_formatter(output_format)
 
@@ -453,6 +456,9 @@ def execute_streaming_query(
         # Show marker info so user knows we're resuming
         ts_display = marker.last_timestamp[:19]
         console.print(f"[dim]Resuming from: {ts_display}[/dim]")
+    elif since_days:
+        # Show since_days info so user knows there's a time filter active
+        console.print(f"[dim]Filtering to last {since_days} days[/dim]")
 
     timestamp_field = f"{index}_timestamp"
 
@@ -739,7 +745,7 @@ def main(ctx: click.Context, verbose: bool, version: bool) -> None:
     "-d",
     type=int,
     default=None,
-    help="Look back N days (default: 7, ignored if marker exists)",
+    help="Look back N days (default: all time, ignored if marker exists)",
 )
 @click.option(
     "--no-marker",
@@ -791,8 +797,7 @@ def query(
       Collector mode (-o/-p): Results to file with incremental markers.
 
     In collector mode, markers track your position so subsequent runs
-    fetch only new records. First run fetches the last 7 days (or
-    --since-days). Use --no-marker for a full re-query.
+    fetch only new records. Use --no-marker for a full re-query.
 
     Use --stream for large queries to see results as they arrive.
     """
@@ -876,7 +881,7 @@ def config_set(key: str, value: str) -> None:
         api-key     Your Cetus API key
         host        API hostname (default: alerting.sparkits.ca)
         timeout     Request timeout in seconds (default: 60)
-        since-days  Default lookback period in days (default: 7)
+        since-days  Default lookback period in days (default: all time)
     """
     try:
         cfg = Config.load()
@@ -899,6 +904,38 @@ def config_set(key: str, value: str) -> None:
     except ValueError as e:
         console.print(f"[red]Invalid value:[/red] {e}")
         sys.exit(1)
+    except CetusError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@config.command("unset")
+@click.argument("key", type=click.Choice(["api-key", "host", "timeout", "since-days"]))
+def config_unset(key: str) -> None:
+    """Remove a configuration value, reverting to default.
+
+    \b
+    Keys:
+        api-key     Your Cetus API key (default: none)
+        host        API hostname (default: alerting.sparkits.ca)
+        timeout     Request timeout in seconds (default: 60)
+        since-days  Default lookback period in days (default: all time)
+    """
+    try:
+        cfg = Config.load()
+
+        if key == "api-key":
+            cfg.api_key = None
+        elif key == "host":
+            cfg.host = DEFAULT_HOST
+        elif key == "timeout":
+            cfg.timeout = DEFAULT_TIMEOUT
+        elif key == "since-days":
+            cfg.since_days = None
+
+        cfg.save()
+        console.print(f"[green]Unset {key} (reverted to default)[/green]")
+
     except CetusError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -1237,7 +1274,7 @@ def alerts_results(
     "-d",
     type=int,
     default=None,
-    help="Look back N days (default: 7, ignored if marker exists)",
+    help="Look back N days (default: all time, ignored if marker exists)",
 )
 @click.option(
     "--no-marker",

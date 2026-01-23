@@ -506,9 +506,7 @@ class TestLegacyMarkerMigration:
         """Create MarkerStore with temporary directory."""
         return MarkerStore(markers_dir=markers_dir)
 
-    def test_get_migrates_legacy_marker_on_file_mode(
-        self, store: MarkerStore, markers_dir: Path
-    ):
+    def test_get_migrates_legacy_marker_on_file_mode(self, store: MarkerStore, markers_dir: Path):
         """get() with mode='file' should find and migrate a legacy marker."""
         query = "host:*.example.com"
         index = "dns"
@@ -545,9 +543,7 @@ class TestLegacyMarkerMigration:
         new_data = json.loads(new_path.read_text())
         assert new_data["mode"] == "file"
 
-    def test_get_does_not_migrate_for_prefix_mode(
-        self, store: MarkerStore, markers_dir: Path
-    ):
+    def test_get_does_not_migrate_for_prefix_mode(self, store: MarkerStore, markers_dir: Path):
         """get() with mode='prefix' should NOT migrate legacy markers."""
         query = "host:*.example.com"
         index = "dns"
@@ -571,9 +567,7 @@ class TestLegacyMarkerMigration:
         # Legacy file should still exist
         assert legacy_path.exists()
 
-    def test_list_all_migrates_legacy_markers(
-        self, store: MarkerStore, markers_dir: Path
-    ):
+    def test_list_all_migrates_legacy_markers(self, store: MarkerStore, markers_dir: Path):
         """list_all() should migrate legacy markers to mode='file'."""
         # Create legacy marker without mode
         legacy_data = {
@@ -631,9 +625,7 @@ class TestLegacyMarkerMigration:
         assert path.exists()
         assert not legacy_path.exists()
 
-    def test_migration_preserves_all_data(
-        self, store: MarkerStore, markers_dir: Path
-    ):
+    def test_migration_preserves_all_data(self, store: MarkerStore, markers_dir: Path):
         """Migration should preserve all marker data."""
         query = "host:preserve.com"
         index = "certstream"
@@ -659,9 +651,7 @@ class TestLegacyMarkerMigration:
         assert result.updated_at == "2025-06-15T14:35:00Z"
         assert result.mode == "file"
 
-    def test_no_migration_when_marker_already_has_mode(
-        self, store: MarkerStore, markers_dir: Path
-    ):
+    def test_no_migration_when_marker_already_has_mode(self, store: MarkerStore, markers_dir: Path):
         """Markers with mode field should not trigger migration."""
         # Create modern marker with mode
         modern_data = {
@@ -745,24 +735,32 @@ class TestLegacyMarkerMigration:
         # Create both legacy and new markers
         legacy_hash = _query_hash(query, index, None)
         legacy_path = markers_dir / f"{index}_{legacy_hash}.json"
-        legacy_path.write_text(json.dumps({
-            "query": query,
-            "index": index,
-            "last_timestamp": "2026-01-01T00:00:00Z",
-            "last_uuid": "old-uuid",
-            "updated_at": "2026-01-01T00:00:00",
-        }))
+        legacy_path.write_text(
+            json.dumps(
+                {
+                    "query": query,
+                    "index": index,
+                    "last_timestamp": "2026-01-01T00:00:00Z",
+                    "last_uuid": "old-uuid",
+                    "updated_at": "2026-01-01T00:00:00",
+                }
+            )
+        )
 
         new_hash = _query_hash(query, index, "file")
         new_path = markers_dir / f"{index}_{new_hash}.json"
-        new_path.write_text(json.dumps({
-            "query": query,
-            "index": index,
-            "last_timestamp": "2026-01-02T00:00:00Z",
-            "last_uuid": "new-uuid",
-            "updated_at": "2026-01-02T00:00:00",
-            "mode": "file",
-        }))
+        new_path.write_text(
+            json.dumps(
+                {
+                    "query": query,
+                    "index": index,
+                    "last_timestamp": "2026-01-02T00:00:00Z",
+                    "last_uuid": "new-uuid",
+                    "updated_at": "2026-01-02T00:00:00",
+                    "mode": "file",
+                }
+            )
+        )
 
         # list_all_with_paths should return only one entry
         results = store.list_all_with_paths()

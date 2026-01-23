@@ -38,8 +38,8 @@ class TestConstants:
         assert DEFAULT_TIMEOUT == 60
 
     def test_default_since_days(self):
-        """DEFAULT_SINCE_DAYS should be 7 days."""
-        assert DEFAULT_SINCE_DAYS == 7
+        """DEFAULT_SINCE_DAYS should be None (query all time by default)."""
+        assert DEFAULT_SINCE_DAYS is None
 
 
 class TestEscapeTomlString:
@@ -111,8 +111,9 @@ class TestConfigDefaults:
         assert config.timeout == DEFAULT_TIMEOUT
 
     def test_default_since_days(self):
-        """Default since_days should be DEFAULT_SINCE_DAYS."""
+        """Default since_days should be None (no time restriction)."""
         config = Config()
+        assert config.since_days is None
         assert config.since_days == DEFAULT_SINCE_DAYS
 
     def test_config_dir_default(self):
@@ -409,6 +410,24 @@ class TestConfigSave:
         assert 'api_key = "my-key"' in content
         assert "host" not in content
         assert "timeout" not in content
+
+    def test_save_since_days_when_set(self, config_dir: Path):
+        """save() should write since_days when explicitly set."""
+        with patch("cetus.config.get_config_dir", return_value=config_dir):
+            config = Config(api_key="my-key", since_days=14)
+            config.save()
+
+        content = (config_dir / "config.toml").read_text()
+        assert "since_days = 14" in content
+
+    def test_save_omits_since_days_when_none(self, config_dir: Path):
+        """save() should not write since_days when it's None (default)."""
+        with patch("cetus.config.get_config_dir", return_value=config_dir):
+            config = Config(api_key="my-key", since_days=None)
+            config.save()
+
+        content = (config_dir / "config.toml").read_text()
+        assert "since_days" not in content
 
     def test_save_escapes_special_characters(self, config_dir: Path):
         """save() should properly escape special characters."""

@@ -127,6 +127,38 @@ class TestConfigCommand:
         assert result.exit_code != 0
         assert "invalid" in result.output.lower() or "error" in result.output.lower()
 
+    def test_config_unset_since_days(self, runner: CliRunner, temp_config_dir: Path):
+        """config unset since-days should remove the setting."""
+        # First set a value
+        config_file = temp_config_dir / "config.toml"
+        config_file.write_text('api_key = "test-key"\nsince_days = 30\n')
+
+        with patch("cetus.config.get_config_dir", return_value=temp_config_dir):
+            result = runner.invoke(main, ["config", "unset", "since-days"])
+
+        assert result.exit_code == 0
+        assert "Unset since-days" in result.output
+
+        # Verify the key was removed from the config file
+        content = config_file.read_text()
+        assert "since_days" not in content
+        assert "api_key" in content  # Other keys preserved
+
+    def test_config_unset_host(self, runner: CliRunner, temp_config_dir: Path):
+        """config unset host should revert to default."""
+        config_file = temp_config_dir / "config.toml"
+        config_file.write_text('host = "custom.example.com"\n')
+
+        with patch("cetus.config.get_config_dir", return_value=temp_config_dir):
+            result = runner.invoke(main, ["config", "unset", "host"])
+
+        assert result.exit_code == 0
+        assert "Unset host" in result.output
+
+        # Verify host is removed (reverted to default, so not saved)
+        content = config_file.read_text()
+        assert "host" not in content
+
 
 class TestMarkersCommand:
     """Tests for the markers command group."""
@@ -1163,6 +1195,200 @@ class TestOutputPrefix:
         )
         assert result.exit_code == 1
         assert "mutually exclusive" in result.output
+
+
+class TestSinceDaysDisplay:
+    """Tests for since_days time filter message display."""
+
+    @pytest.fixture
+    def mock_query_result(self) -> QueryResult:
+        """Sample query results."""
+        return QueryResult(
+            data=[
+                {
+                    "uuid": "1",
+                    "host": "example.com",
+                    "A": "1.1.1.1",
+                    "dns_timestamp": "2025-01-01T00:00:00Z",
+                },
+            ],
+            total_fetched=1,
+            last_uuid="1",
+            last_timestamp="2025-01-01T00:00:00Z",
+            pages_fetched=1,
+        )
+
+    def test_since_days_shows_filter_message(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result: QueryResult,
+    ):
+        """When --since-days is set, should display 'Filtering to last N days' message."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "query",
+                    "host:*",
+                    "--since-days",
+                    "7",
+                    "--format",
+                    "jsonl",
+                    "--api-key",
+                    "test-key",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "Filtering to last 7 days" in result.output
+
+    def test_no_since_days_shows_no_filter_message(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result: QueryResult,
+    ):
+        """When --since-days is not set (default None), no filter message should appear."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "query",
+                    "host:*",
+                    "--format",
+                    "jsonl",
+                    "--api-key",
+                    "test-key",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "Filtering to last" not in result.output
+
+    def test_since_days_from_config_shows_filter_message(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result: QueryResult,
+    ):
+        """When since_days is set via config file, should display filter message."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Create config file with since_days
+        config_file = config_dir / "config.toml"
+        config_file.write_text('api_key = "test-key"\nsince_days = 30\n')
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            # Clear env vars so config file takes precedence
+            env = {k: v for k, v in os.environ.items() if not k.startswith("CETUS_")}
+            result = runner.invoke(
+                main,
+                ["query", "host:*", "--format", "jsonl"],
+                env=env,
+            )
+
+        assert result.exit_code == 0
+        assert "Filtering to last 30 days" in result.output
+
+    def test_marker_takes_precedence_over_since_days_message(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        mock_query_result: QueryResult,
+    ):
+        """When marker exists, should show 'Resuming from' instead of 'Filtering' message.
+
+        This test uses MarkerStore.get patching to ensure the marker is found,
+        since the Click runner's environment makes path patching tricky.
+        """
+        from cetus.markers import Marker, MarkerStore
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        output_file = tmp_path / "results.jsonl"
+
+        # Create a mock marker that will be returned
+        mock_marker = Marker(
+            query="host:*",
+            index="dns",
+            last_timestamp="2025-01-01T00:00:00Z",
+            last_uuid="uuid-123",
+            updated_at="2025-01-02T00:00:00Z",
+        )
+
+        async def mock_query_async(*args, **kwargs):
+            return mock_query_result
+
+        # Patch MarkerStore.get to return our marker
+        def mock_get(self, query, index, mode=None):
+            if query == "host:*" and index == "dns":
+                return mock_marker
+            return None
+
+        with (
+            patch("cetus.config.get_config_dir", return_value=config_dir),
+            patch("cetus.config.get_data_dir", return_value=data_dir),
+            patch.object(MarkerStore, "get", mock_get),
+            patch.object(MarkerStore, "save"),  # Don't actually save
+            patch("cetus.client.CetusClient.query_async", mock_query_async),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "query",
+                    "host:*",
+                    "-o",
+                    str(output_file),
+                    "--since-days",
+                    "7",  # This should be ignored when marker exists
+                    "--format",
+                    "jsonl",
+                    "--api-key",
+                    "test-key",
+                ],
+            )
+
+        assert result.exit_code == 0
+        # Should show marker message, not filtering message
+        assert "Resuming from" in result.output
+        assert "Filtering to last" not in result.output
 
 
 class TestOutputDirectoryErrorHandling:

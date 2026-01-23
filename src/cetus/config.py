@@ -23,7 +23,7 @@ from .exceptions import ConfigurationError
 APP_NAME = "cetus"
 DEFAULT_HOST = "alerting.sparkits.ca"
 DEFAULT_TIMEOUT = 60
-DEFAULT_SINCE_DAYS = 7
+DEFAULT_SINCE_DAYS = None  # No time restriction by default; query all available data
 
 
 def _escape_toml_string(value: str) -> str:
@@ -69,7 +69,7 @@ class Config:
     api_key: str | None = None
     host: str = DEFAULT_HOST
     timeout: int = DEFAULT_TIMEOUT
-    since_days: int = DEFAULT_SINCE_DAYS
+    since_days: int | None = DEFAULT_SINCE_DAYS
 
     # Resolved paths
     config_dir: Path = field(default_factory=get_config_dir)
@@ -171,7 +171,7 @@ class Config:
             lines.append(f'host = "{_escape_toml_string(self.host)}"')
         if self.timeout != DEFAULT_TIMEOUT:
             lines.append(f"timeout = {self.timeout}")
-        if self.since_days != DEFAULT_SINCE_DAYS:
+        if self.since_days is not None:
             lines.append(f"since_days = {self.since_days}")
 
         config_file.write_text("\n".join(lines) + "\n" if lines else "")

@@ -373,7 +373,7 @@ class CetusClient:
         search: str,
         index: Index = "dns",
         media: Media = "nvme",
-        since_days: int | None = 7,
+        since_days: int | None = None,
         marker: Marker | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> QueryResult:
@@ -519,7 +519,7 @@ class CetusClient:
         search: str,
         index: Index = "dns",
         media: Media = "nvme",
-        since_days: int | None = 7,
+        since_days: int | None = None,
         marker: Marker | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> QueryResult:
@@ -602,7 +602,7 @@ class CetusClient:
         search: str,
         index: Index = "dns",
         media: Media = "nvme",
-        since_days: int | None = 7,
+        since_days: int | None = None,
         marker: Marker | None = None,
     ) -> Iterator[dict]:
         """Execute a query and yield results one at a time.
@@ -642,7 +642,7 @@ class CetusClient:
         search: str,
         index: Index = "dns",
         media: Media = "nvme",
-        since_days: int | None = 7,
+        since_days: int | None = None,
         marker: Marker | None = None,
     ) -> Iterator[dict]:
         """Execute a streaming query, yielding results as they arrive from the server.
@@ -740,7 +740,7 @@ class CetusClient:
         search: str,
         index: Index = "dns",
         media: Media = "nvme",
-        since_days: int | None = 7,
+        since_days: int | None = None,
         marker: Marker | None = None,
     ) -> AsyncIterator[dict]:
         """Execute a streaming query asynchronously, yielding results as they arrive.
